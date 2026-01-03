@@ -1,0 +1,71 @@
+!#############################################
+!# DATM Namelist Template
+!# SECOFS (Southeast Coastal OFS)
+!#############################################
+!#
+!# Template file - substitute @[VAR] placeholders at runtime
+!#
+!# Required environment variables for substitution:
+!#   DATA       - Working directory path
+!#   NX_GFS     - GFS grid x-dimension (default: 101 for SECOFS subset)
+!#   NY_GFS     - GFS grid y-dimension (default: 93 for SECOFS subset)
+!#
+!# Usage:
+!#   sed -e "s|@\[DATA\]|${DATA}|g" \
+!#       -e "s/@\[NX_GFS\]/${NX_GFS:-101}/g" \
+!#       -e "s/@\[NY_GFS\]/${NY_GFS:-93}/g" \
+!#       datm_in.template > datm_in
+!#
+
+&datm_nml
+  !-----------------------------------------
+  ! Data Mode
+  !-----------------------------------------
+  ! ATMMESH = read data on ESMF mesh
+  datamode = "ATMMESH"
+
+  !-----------------------------------------
+  ! Mesh Files
+  !-----------------------------------------
+  ! GFS mesh for primary atmospheric forcing
+  model_meshfile = "@[DATA]/INPUT/gfs_esmf_mesh.nc"
+  model_maskfile = "@[DATA]/INPUT/gfs_esmf_mesh.nc"
+
+  !-----------------------------------------
+  ! Grid Dimensions (for GFS 0.25 deg subset)
+  !-----------------------------------------
+  ! SECOFS domain: -88 to -63 lon, 17 to 40 lat
+  ! At 0.25 deg: (88-63)/0.25 + 1 = 101, (40-17)/0.25 + 1 = 93
+  nx_global = @[NX_GFS]
+  ny_global = @[NY_GFS]
+
+  !-----------------------------------------
+  ! Factor Files (none used)
+  !-----------------------------------------
+  factorfn_data = "null"
+  factorfn_mesh = "null"
+
+  !-----------------------------------------
+  ! Optional Fields
+  !-----------------------------------------
+  flds_co2 = .false.
+  flds_presaero = .false.
+  flds_wiso = .false.
+
+  !-----------------------------------------
+  ! Radiation Settings
+  !-----------------------------------------
+  ! iradsw = 1: Use incoming shortwave from data
+  iradsw = 1
+
+  !-----------------------------------------
+  ! Restart File
+  !-----------------------------------------
+  restfilm = "null"
+
+  !-----------------------------------------
+  ! Export Settings
+  !-----------------------------------------
+  export_all = .true.
+
+/

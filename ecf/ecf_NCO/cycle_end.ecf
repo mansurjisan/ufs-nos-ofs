@@ -1,0 +1,10 @@
+#!/bin/bash -l
+
+export ECF_RID=%TASK%.$$
+export model=nosofs
+%include <head.h>
+
+sleep 10
+
+%include <tail.h>
+

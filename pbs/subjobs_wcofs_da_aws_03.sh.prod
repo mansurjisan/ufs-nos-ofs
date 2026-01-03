@@ -1,0 +1,17 @@
+#!/bin/bash
+. /lfs/h1/nos/nosofs/noscrub/machuan.peng/packages/nosofs.v3.7.0/versions/run.ver
+module purge
+module load envvar/${envvars_ver:?}
+module load PrgEnv-intel/${PrgEnv_intel_ver}
+module load craype/${craype_ver}
+module load intel/${intel_ver}
+export LSFDIR=/lfs/h1/nos/nosofs/noscrub/machuan.peng/packages/nosofs.v3.7.0/pbs 
+if [ ! -d /lfs/h1/nos/ptmp/machuan.peng/execlog ]; then 
+   mkdir -p /lfs/h1/nos/ptmp/machuan.peng/execlog 
+fi 
+if [ ! -d /lfs/h1/nos/ptmp/machuan.peng/rpt/v3.7.0 ]; then 
+   mkdir -p /lfs/h1/nos/ptmp/machuan.peng/rpt/v3.7.0 
+fi 
+rm -f /lfs/h1/nos/ptmp/machuan.peng/rpt/v3.7.0/wcofs_da_aws_03_prod.out
+rm -f /lfs/h1/nos/ptmp/machuan.peng/rpt/v3.7.0/wcofs_da_aws_03_prod.err
+qsub $LSFDIR/jnos_wcofs_da_aws_03.prod

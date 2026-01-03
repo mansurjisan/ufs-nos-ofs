@@ -1,0 +1,68 @@
+#############################################
+# UFS-Coastal Model Configuration Template
+# SECOFS (Southeast Coastal OFS)
+#############################################
+#
+# Template file - substitute @[VAR] placeholders at runtime
+#
+# Required environment variables for substitution:
+#   PDY        - Forecast date (YYYYMMDD)
+#   cyc        - Cycle hour (00, 06, 12, 18)
+#   NHOURS     - Forecast length in hours (default: 48)
+#   DT_ATMOS   - Atmospheric coupling timestep (default: 120)
+#
+# Usage:
+#   sed -e "s/@\[YYYY\]/${PDY:0:4}/g" \
+#       -e "s/@\[MM\]/${PDY:4:2}/g" \
+#       -e "s/@\[DD\]/${PDY:6:2}/g" \
+#       -e "s/@\[HH\]/${cyc}/g" \
+#       -e "s/@\[NHOURS\]/${NHOURS:-48}/g" \
+#       -e "s/@\[DT_ATMOS\]/${DT_ATMOS:-120}/g" \
+#       model_configure.template > model_configure
+#
+
+#############################################
+# Simulation Start Time
+#############################################
+start_year:              @[YYYY]
+start_month:             @[MM]
+start_day:               @[DD]
+start_hour:              @[HH]
+start_minute:            0
+start_second:            0
+
+#############################################
+# Forecast Length
+#############################################
+nhours_fcst:             @[NHOURS]
+fhrot:                   0
+
+#############################################
+# Model Timestep
+#############################################
+dt_atmos:                @[DT_ATMOS]
+
+#############################################
+# Restart Settings
+#############################################
+restart_interval:        6
+
+#############################################
+# Output Settings
+#############################################
+quilting:                .true.
+write_groups:            1
+write_tasks_per_group:   6
+output_history:          .true.
+write_dopost:            .false.
+num_files:               2
+filename_base:           'atm' 'sfc'
+output_grid:             'regional_latlon'
+output_file:             'netcdf'
+
+#############################################
+# Output Grid (covers SECOFS domain)
+#############################################
+# Domain: -88.0 to -63.0 lon, 17.0 to 40.0 lat
+imo:                     101
+jmo:                     93
