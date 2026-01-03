@@ -209,14 +209,31 @@ export FIXofs=/path/to/fix/secofs
 - `@[NHOURS]` - Forecast length
 - `@[DT_ATMOS]` - Atmospheric coupling timestep
 
-### Phase 4: param.nml Modification
+### Phase 4: param.nml Modification (COMPLETED)
+
+Created `secofs.param.nml.ufs` with `nws=3` for NUOPC coupling:
 
 ```fortran
-! Change from:
+! Original (secofs.param.nml):
 nws = 2  ! sflux file input
 
-! To:
+! UFS version (secofs.param.nml.ufs):
 nws = 3  ! NUOPC coupling with DATM
+```
+
+**Files in fix/secofs/:**
+| File | nws | Purpose |
+|------|-----|---------|
+| `secofs.param.nml` | 2 | Standard nosofs (sflux files) |
+| `secofs.param.nml.ufs` | 3 | UFS-Coastal (NUOPC/DATM) |
+
+**Usage:** Copy the appropriate version to the run directory:
+```bash
+# For standard nosofs run:
+cp ${FIXofs}/secofs.param.nml ${DATA}/param.nml
+
+# For UFS-Coastal run:
+cp ${FIXofs}/secofs.param.nml.ufs ${DATA}/param.nml
 ```
 
 ### Phase 5: Testing
@@ -771,6 +788,7 @@ jmo:                     93
 | 2026-01-03 | 1.1 | Claude Code | Added Static vs Cycle-Dependent Files section |
 | 2026-01-03 | 1.2 | Claude Code | Added UFS config templates (Phase 3 complete) |
 | 2026-01-03 | 1.3 | Claude Code | Added Script Locations & Usage section |
+| 2026-01-03 | 1.4 | Claude Code | Created secofs.param.nml.ufs (Phase 4 complete) |
 
 ---
 
