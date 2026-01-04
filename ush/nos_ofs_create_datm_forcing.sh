@@ -4,29 +4,37 @@
 #
 # Purpose:
 #   Create DATM forcing files by extracting and concatenating meteorological
-#   variables from GFS/HRRR GRIB2 files for nowcast+forecast periods.
+#   variables from GFS/HRRR GRIB2 files for all forecast hours.
 #   This creates time-series NetCDF files for use with UFS-Coastal CDEPS DATM.
 #
+#   The script follows the same file selection logic as the nosofs sflux
+#   generation to ensure data availability in operational environments:
+#   - GFS: Uses a base cycle (typically 6h before run cycle) with extended
+#          forecast hours (f003-f054)
+#   - HRRR: Uses hourly cycles for nowcast, then extended forecasts from
+#           the run cycle (00Z/06Z/12Z/18Z) for forecast period
+#
 # Usage:
-#   ./nos_ofs_create_datm_forcing.sh DBASE OUTPUT_DIR [TIME_START TIME_END]
+#   ./nos_ofs_create_datm_forcing.sh DBASE OUTPUT_DIR [TIME_START] [TIME_END]
 #
 # Arguments:
 #   DBASE      - Data source: GFS25 or HRRR
 #   OUTPUT_DIR - Directory for output files
-#   TIME_START - Start time (YYYYMMDDHH) - optional, defaults to time_hotstart
-#   TIME_END   - End time (YYYYMMDDHH) - optional, defaults to time_forecastend
+#   TIME_START - Start time YYYYMMDDHH (optional, default: time_hotstart - 3h)
+#   TIME_END   - End time YYYYMMDDHH (optional, default: time_forecastend)
 #
 # Environment Variables:
-#   time_hotstart    - Nowcast start time (from restart file)
-#   time_nowcastend  - Current cycle time (PDY+cyc)
-#   time_forecastend - Forecast end time
-#   COMINgfs         - GFS input directory
-#   COMINhrrr        - HRRR input directory
-#   WGRIB2           - Path to wgrib2 executable
-#   NDATE            - NDATE utility path
+#   PDY        - Forecast date (YYYYMMDD)
+#   cyc        - Forecast cycle (00, 06, 12, 18)
+#   COMINgfs   - GFS input directory
+#   COMINhrrr  - HRRR input directory
+#   WGRIB2     - Path to wgrib2 executable
+#   NDATE      - Path to ndate utility
+#   NHOUR      - Path to nhour utility
 #
 # Output Files:
-#   ${DBASE}_forcing.nc - Combined forcing file with all timesteps
+#   gfs_forcing.nc  - GFS forcing file (if DBASE=GFS25)
+#   hrrr_forcing.nc - HRRR forcing file (if DBASE=HRRR)
 #
 # Author: SECOFS UFS-Coastal Transition
 # Date: January 2026
@@ -39,12 +47,12 @@ set -x
 # =============================================================================
 DBASE=$1
 OUTPUT_DIR=$2
-TIME_START=${3:-}
-TIME_END=${4:-}
+TIME_START=$3
+TIME_END=$4
 
 if [ -z "$DBASE" ] || [ -z "$OUTPUT_DIR" ]; then
     echo "============================================"
-    echo "Usage: $0 DBASE OUTPUT_DIR [TIME_START TIME_END]"
+    echo "Usage: $0 DBASE OUTPUT_DIR [TIME_START] [TIME_END]"
     echo ""
     echo "Arguments:"
     echo "  DBASE      - Data source: GFS25 or HRRR"
@@ -52,8 +60,8 @@ if [ -z "$DBASE" ] || [ -z "$OUTPUT_DIR" ]; then
     echo "  TIME_START - Start time YYYYMMDDHH (optional)"
     echo "  TIME_END   - End time YYYYMMDDHH (optional)"
     echo ""
-    echo "Environment Variables:"
-    echo "  time_hotstart, time_forecastend, COMINgfs, COMINhrrr"
+    echo "Environment Variables Required:"
+    echo "  PDY, cyc, COMINgfs/COMINhrrr, WGRIB2, NDATE"
     echo "============================================"
     exit 1
 fi
@@ -63,25 +71,18 @@ fi
 # =============================================================================
 WGRIB2=${WGRIB2:-wgrib2}
 NDATE=${NDATE:-ndate}
+NHOUR=${NHOUR:-nhour}
+PDY=${PDY:-$(date +%Y%m%d)}
+cyc=${cyc:-00}
 
-# Use environment time variables if arguments not provided
+# Default time range if not provided
 if [ -z "$TIME_START" ]; then
-    if [ -n "$time_hotstart" ]; then
-        # Go 3 hours before hotstart (same as sflux)
-        TIME_START=$($NDATE -3 $time_hotstart)
-    else
-        echo "ERROR: TIME_START not provided and time_hotstart not set"
-        exit 1
-    fi
+    # Default: PDY + cyc - 6h (nowcast start) - 3h buffer = -9h from cycle
+    TIME_START=$($NDATE -9 ${PDY}${cyc})
 fi
-
 if [ -z "$TIME_END" ]; then
-    if [ -n "$time_forecastend" ]; then
-        TIME_END=$time_forecastend
-    else
-        echo "ERROR: TIME_END not provided and time_forecastend not set"
-        exit 1
-    fi
+    # Default: PDY + cyc + 48h
+    TIME_END=$($NDATE 48 ${PDY}${cyc})
 fi
 
 mkdir -p $OUTPUT_DIR
@@ -96,7 +97,7 @@ if [ "$DBASE_LOWER" == "gfs25" ]; then
 fi
 
 # Calculate total hours
-TOTAL_HOURS=$($NHOUR $TIME_END $TIME_START 2>/dev/null || echo "54")
+TOTAL_HOURS=$($NHOUR $TIME_END $TIME_START)
 
 echo "============================================"
 echo "DATM Forcing File Generation"
@@ -113,20 +114,18 @@ echo "============================================"
 # Set Data Source Parameters
 # =============================================================================
 if [ "$DBASE_UPPER" == "GFS" ] || [ "$DBASE_UPPER" == "GFS25" ]; then
-    # GFS 0.25 degree - 3-hourly forecasts
     INTERVAL=3
     COMIN=${COMINgfs:-/lfs/h1/ops/prod/com/gfs/v16.3}
-    # Variables to extract
+    # GFS variables to extract
     MATCH_PATTERN=":(UGRD|VGRD):10 m above ground:|:(TMP|SPFH):2 m above ground:|:PRMSL:mean sea level:|:(DSWRF|DLWRF|PRATE):surface:"
-    OUTPUT_FILE="${OUTPUT_DIR}/${DBASE_LOWER}_forcing.nc"
+    OUTPUT_FILE=${OUTPUT_DIR}/gfs_forcing.nc
 
 elif [ "$DBASE_UPPER" == "HRRR" ]; then
-    # HRRR 3km - hourly forecasts
     INTERVAL=1
     COMIN=${COMINhrrr:-/lfs/h1/ops/prod/com/hrrr/v4.1}
     # HRRR uses MSLMA instead of PRMSL
     MATCH_PATTERN=":(UGRD|VGRD):10 m above ground:|:(TMP|SPFH):2 m above ground:|:MSLMA:mean sea level:|:(DSWRF|DLWRF|PRATE):surface:"
-    OUTPUT_FILE="${OUTPUT_DIR}/${DBASE_LOWER}_forcing.nc"
+    OUTPUT_FILE=${OUTPUT_DIR}/hrrr_forcing.nc
 else
     echo "ERROR: Unknown DBASE: $DBASE"
     echo "Supported values: GFS, GFS25, HRRR"
@@ -134,142 +133,188 @@ else
 fi
 
 # =============================================================================
-# Step 1: Find and extract GRIB2 files for time range
+# Function: Find GFS file for a valid time
+# Strategy: Use base cycle (typically 18Z for 00Z run) with extended forecasts
 # =============================================================================
-# This mimics sflux logic: search across multiple cycles to cover the time range
+find_gfs_file() {
+    local VALID_TIME=$1
+    local VALID_DATE=$(echo $VALID_TIME | cut -c1-8)
+    local VALID_HH=$(echo $VALID_TIME | cut -c9-10)
+
+    # Try cycles in order of preference: 18Z, 12Z, 06Z, 00Z from previous days
+    # Start with the cycle 6 hours before valid time, then go backwards
+    local VALID_EPOCH=$($NDATE 0 $VALID_TIME | cut -c1-10)
+
+    # Calculate initial cycle (6 hours before valid time, rounded down to 00/06/12/18)
+    local INIT_CYCLE_TIME=$($NDATE -6 $VALID_TIME)
+    local INIT_DATE=$(echo $INIT_CYCLE_TIME | cut -c1-8)
+    local INIT_HH=$(echo $INIT_CYCLE_TIME | cut -c9-10)
+    local INIT_HH_NUM=$((10#$INIT_HH))
+
+    # Round down to nearest 6-hourly cycle
+    local CYCLE_HH=$(printf "%02d" $((INIT_HH_NUM / 6 * 6)))
+    local CYCLE_DATE=$INIT_DATE
+    local CYCLE_TIME="${CYCLE_DATE}${CYCLE_HH}"
+
+    # Try up to 4 cycles (going back 24 hours)
+    for attempt in 1 2 3 4; do
+        local FHR=$($NHOUR $VALID_TIME $CYCLE_TIME 2>/dev/null || echo "-1")
+
+        # Skip if FHR is negative or too large
+        if [ "$FHR" -ge 0 ] && [ "$FHR" -le 120 ]; then
+            local FHR_STR=$(printf "%03d" $FHR)
+            local GRIB2_FILE="${COMIN}/gfs.${CYCLE_DATE}/${CYCLE_HH}/atmos/gfs.t${CYCLE_HH}z.pgrb2.0p25.f${FHR_STR}"
+
+            if [ -s "$GRIB2_FILE" ]; then
+                echo "$GRIB2_FILE"
+                return 0
+            fi
+        fi
+
+        # Try previous cycle (6 hours earlier)
+        CYCLE_TIME=$($NDATE -6 $CYCLE_TIME)
+        CYCLE_DATE=$(echo $CYCLE_TIME | cut -c1-8)
+        CYCLE_HH=$(echo $CYCLE_TIME | cut -c9-10)
+    done
+
+    echo ""
+    return 1
+}
+
+# =============================================================================
+# Function: Find HRRR file for a valid time
+# Strategy:
+#   - For past hours: Use hourly cycles with f01 (previous hour's cycle)
+#   - For future hours: Use 00Z/06Z/12Z/18Z cycle with extended forecasts
+# =============================================================================
+find_hrrr_file() {
+    local VALID_TIME=$1
+    local VALID_DATE=$(echo $VALID_TIME | cut -c1-8)
+    local VALID_HH=$(echo $VALID_TIME | cut -c9-10)
+    local VALID_HH_NUM=$((10#$VALID_HH))
+
+    # Current run cycle time
+    local RUN_CYCLE_TIME="${PDY}${cyc}"
+
+    # Check if this valid time is before or after the run cycle
+    local HOURS_FROM_CYCLE=$($NHOUR $VALID_TIME $RUN_CYCLE_TIME 2>/dev/null || echo "0")
+
+    # Strategy 1: For times before or at run cycle, use hourly cycles with f01
+    # (This matches Machuan's approach for nowcast period)
+    if [ "$HOURS_FROM_CYCLE" -le 0 ]; then
+        # Use previous hour's cycle with f01
+        local PREV_HOUR_TIME=$($NDATE -1 $VALID_TIME)
+        local PREV_DATE=$(echo $PREV_HOUR_TIME | cut -c1-8)
+        local PREV_HH=$(echo $PREV_HOUR_TIME | cut -c9-10)
+
+        local GRIB2_FILE="${COMIN}/hrrr.${PREV_DATE}/conus/hrrr.t${PREV_HH}z.wrfsfcf01.grib2"
+        if [ -s "$GRIB2_FILE" ]; then
+            echo "$GRIB2_FILE"
+            return 0
+        fi
+    fi
+
+    # Strategy 2: For times after run cycle, use run cycle with extended forecasts
+    # (This matches Machuan's approach for forecast period)
+    if [ "$HOURS_FROM_CYCLE" -gt 0 ]; then
+        local FHR=$HOURS_FROM_CYCLE
+        if [ "$FHR" -ge 1 ] && [ "$FHR" -le 48 ]; then
+            local FHR_STR=$(printf "%02d" $FHR)
+            local GRIB2_FILE="${COMIN}/hrrr.${PDY}/conus/hrrr.t${cyc}z.wrfsfcf${FHR_STR}.grib2"
+            if [ -s "$GRIB2_FILE" ]; then
+                echo "$GRIB2_FILE"
+                return 0
+            fi
+        fi
+    fi
+
+    # Strategy 3: Fallback - try previous hourly cycles with f01
+    for back_hours in 1 2 3 4; do
+        local TRY_TIME=$($NDATE -$back_hours $VALID_TIME)
+        local TRY_DATE=$(echo $TRY_TIME | cut -c1-8)
+        local TRY_HH=$(echo $TRY_TIME | cut -c9-10)
+        local FHR=$back_hours
+        local FHR_STR=$(printf "%02d" $FHR)
+
+        local GRIB2_FILE="${COMIN}/hrrr.${TRY_DATE}/conus/hrrr.t${TRY_HH}z.wrfsfcf${FHR_STR}.grib2"
+        if [ -s "$GRIB2_FILE" ]; then
+            echo "$GRIB2_FILE"
+            return 0
+        fi
+    done
+
+    # Strategy 4: Fallback - try 6-hourly cycles (00Z, 06Z, 12Z, 18Z) with extended forecasts
+    local INIT_TIME=$($NDATE -6 $VALID_TIME)
+    local INIT_DATE=$(echo $INIT_TIME | cut -c1-8)
+    local INIT_HH_NUM=$((10#$(echo $INIT_TIME | cut -c9-10)))
+    local CYCLE_HH=$(printf "%02d" $((INIT_HH_NUM / 6 * 6)))
+    local CYCLE_TIME="${INIT_DATE}${CYCLE_HH}"
+
+    for attempt in 1 2 3 4; do
+        local FHR=$($NHOUR $VALID_TIME $CYCLE_TIME 2>/dev/null || echo "-1")
+        local CYCLE_DATE=$(echo $CYCLE_TIME | cut -c1-8)
+        local CYCLE_HH_STR=$(echo $CYCLE_TIME | cut -c9-10)
+
+        if [ "$FHR" -ge 1 ] && [ "$FHR" -le 48 ]; then
+            local FHR_STR=$(printf "%02d" $FHR)
+            local GRIB2_FILE="${COMIN}/hrrr.${CYCLE_DATE}/conus/hrrr.t${CYCLE_HH_STR}z.wrfsfcf${FHR_STR}.grib2"
+            if [ -s "$GRIB2_FILE" ]; then
+                echo "$GRIB2_FILE"
+                return 0
+            fi
+        fi
+
+        # Try previous 6-hourly cycle
+        CYCLE_TIME=$($NDATE -6 $CYCLE_TIME)
+    done
+
+    echo ""
+    return 1
+}
+
+# =============================================================================
+# Step 1: Find and extract variables for each timestep
+# =============================================================================
 echo ""
 echo "Step 1: Finding GRIB2 files for time range..."
 echo "============================================"
 
 FILE_COUNT=0
 MISSING_COUNT=0
-
-# Current time pointer
 CURRENT_TIME=$TIME_START
+FILE_LIST=""
 
-while [ $CURRENT_TIME -le $TIME_END ]; do
-    # Extract date components
-    YYYY=$(echo $CURRENT_TIME | cut -c1-4)
-    MM=$(echo $CURRENT_TIME | cut -c5-6)
-    DD=$(echo $CURRENT_TIME | cut -c7-8)
-    HH=$(echo $CURRENT_TIME | cut -c9-10)
-
-    # Find which cycle this time belongs to
-    # GFS cycles: 00, 06, 12, 18
-    # HRRR cycles: every hour
-
-    if [ "$DBASE_UPPER" == "GFS" ] || [ "$DBASE_UPPER" == "GFS25" ]; then
-        # Find nearest GFS cycle (00, 06, 12, 18)
-        HH_NUM=$((10#$HH))
-        if [ $HH_NUM -lt 6 ]; then
-            CYCLE="00"
-            CYCLE_DATE="${YYYY}${MM}${DD}"
-        elif [ $HH_NUM -lt 12 ]; then
-            CYCLE="06"
-            CYCLE_DATE="${YYYY}${MM}${DD}"
-        elif [ $HH_NUM -lt 18 ]; then
-            CYCLE="12"
-            CYCLE_DATE="${YYYY}${MM}${DD}"
-        else
-            CYCLE="18"
-            CYCLE_DATE="${YYYY}${MM}${DD}"
-        fi
-
-        # Calculate forecast hour from cycle
-        CYCLE_TIME="${CYCLE_DATE}${CYCLE}"
-        FHR=$($NHOUR $CURRENT_TIME $CYCLE_TIME 2>/dev/null || echo "0")
-
-        # If FHR is negative or zero, use previous cycle
-        # IMPORTANT: f000 (analysis) files don't have radiation fields (DSWRF, DLWRF)
-        # We must use forecast files (f003+) to get all variables
-        if [ $FHR -le 0 ]; then
-            CYCLE_TIME=$($NDATE -6 $CYCLE_TIME)
-            CYCLE_DATE=$(echo $CYCLE_TIME | cut -c1-8)
-            CYCLE=$(echo $CYCLE_TIME | cut -c9-10)
-            FHR=$($NHOUR $CURRENT_TIME $CYCLE_TIME 2>/dev/null || echo "6")
-        fi
-
-        FHR_STR=$(printf "%03d" $FHR)
-        GRIB2_FILE="${COMIN}/gfs.${CYCLE_DATE}/${CYCLE}/atmos/gfs.t${CYCLE}z.pgrb2.0p25.f${FHR_STR}"
-
-    else  # HRRR
-        # HRRR has hourly cycles, but we prefer cycles with longer forecasts (00,06,12,18)
-        # IMPORTANT: f00 (analysis) files don't have radiation fields (DSWRF, DLWRF)
-        # We must use forecast files (f01+) to get all variables
-        HH_NUM=$((10#$HH))
-
-        # Try previous hour cycle first (so FHR >= 1), then fall back to main cycles
-        PREV_HH=$(printf "%02d" $(( (HH_NUM + 23) % 24 )))  # Previous hour
-        for TRY_CYCLE in $PREV_HH 00 06 12 18; do
-            TRY_CYCLE=$(printf "%02d" $((10#$TRY_CYCLE)))
-            CYCLE_DATE="${YYYY}${MM}${DD}"
-
-            # Adjust date if trying previous hour crossed midnight
-            if [ "$TRY_CYCLE" == "$PREV_HH" ] && [ $HH_NUM -eq 0 ]; then
-                CYCLE_DATE=$($NDATE -24 ${CYCLE_DATE}00 | cut -c1-8)
-            fi
-
-            CYCLE_TIME="${CYCLE_DATE}${TRY_CYCLE}"
-            FHR=$($NHOUR $CURRENT_TIME $CYCLE_TIME 2>/dev/null || echo "-1")
-
-            # Check if FHR is valid (1-48 for main cycles, 1-18 for others)
-            # Skip FHR=0 to avoid analysis files
-            if [ $FHR -ge 1 ]; then
-                if [ "$TRY_CYCLE" == "00" ] || [ "$TRY_CYCLE" == "06" ] || [ "$TRY_CYCLE" == "12" ] || [ "$TRY_CYCLE" == "18" ]; then
-                    MAX_FHR=48
-                else
-                    MAX_FHR=18
-                fi
-
-                if [ $FHR -le $MAX_FHR ]; then
-                    CYCLE=$TRY_CYCLE
-                    break
-                fi
-            fi
-        done
-
-        # If still invalid, try previous day's cycles
-        if [ $FHR -lt 1 ] || [ $FHR -gt 48 ]; then
-            PREV_DATE=$($NDATE -24 ${YYYY}${MM}${DD}00 | cut -c1-8)
-            for TRY_CYCLE in 23 18 12 06 00; do
-                TRY_CYCLE=$(printf "%02d" $TRY_CYCLE)
-                CYCLE_TIME="${PREV_DATE}${TRY_CYCLE}"
-                FHR=$($NHOUR $CURRENT_TIME $CYCLE_TIME 2>/dev/null || echo "-1")
-                if [ $FHR -ge 1 ] && [ $FHR -le 48 ]; then
-                    CYCLE_DATE=$PREV_DATE
-                    CYCLE=$TRY_CYCLE
-                    break
-                fi
-            done
-        fi
-
-        FHR_STR=$(printf "%02d" $FHR)
-        GRIB2_FILE="${COMIN}/hrrr.${CYCLE_DATE}/conus/hrrr.t${CYCLE}z.wrfsfcf${FHR_STR}.grib2"
-    fi
-
-    # Output file for this timestep
-    TIME_STR="${YYYY}${MM}${DD}${HH}"
+while [ "$CURRENT_TIME" -le "$TIME_END" ]; do
+    TIME_STR=$CURRENT_TIME
     NC_FILE="${TEMP_DIR}/${DBASE_LOWER}_${TIME_STR}.nc"
 
-    if [ -s "$GRIB2_FILE" ]; then
-        echo "Processing ${TIME_STR}: $GRIB2_FILE (f${FHR_STR})"
+    # Find the appropriate GRIB2 file
+    if [ "$DBASE_UPPER" == "GFS" ] || [ "$DBASE_UPPER" == "GFS25" ]; then
+        GRIB2_FILE=$(find_gfs_file $CURRENT_TIME)
+    else
+        GRIB2_FILE=$(find_hrrr_file $CURRENT_TIME)
+    fi
+
+    if [ -n "$GRIB2_FILE" ] && [ -s "$GRIB2_FILE" ]; then
+        echo "Processing ${TIME_STR}: $GRIB2_FILE"
 
         $WGRIB2 $GRIB2_FILE \
             -match "$MATCH_PATTERN" \
-            -netcdf $NC_FILE 2>/dev/null
+            -netcdf $NC_FILE
 
         if [ -s "$NC_FILE" ]; then
             FILE_COUNT=$((FILE_COUNT + 1))
+            FILE_LIST="$FILE_LIST $NC_FILE"
         else
-            echo "WARNING: Failed to extract from $GRIB2_FILE"
+            echo "WARNING: Failed to extract data for $TIME_STR"
             MISSING_COUNT=$((MISSING_COUNT + 1))
         fi
     else
-        echo "WARNING: File not found: $GRIB2_FILE"
+        echo "WARNING: No file found for valid time $TIME_STR"
         MISSING_COUNT=$((MISSING_COUNT + 1))
     fi
 
-    # Advance to next time step
+    # Advance to next timestep
     CURRENT_TIME=$($NDATE $INTERVAL $CURRENT_TIME)
 done
 
@@ -283,16 +328,15 @@ if [ $FILE_COUNT -eq 0 ]; then
 fi
 
 # =============================================================================
-# Step 2: Concatenate all files along time dimension
+# Step 2: Concatenate files along time dimension
 # =============================================================================
 echo ""
 echo "Step 2: Concatenating files..."
 echo "============================================"
 
-# List files in chronological order
+# Sort files by name (which sorts by time due to naming convention)
 NC_FILES=$(ls -1 ${TEMP_DIR}/${DBASE_LOWER}_*.nc 2>/dev/null | sort)
 NUM_FILES=$(echo "$NC_FILES" | wc -l)
-
 echo "Found $NUM_FILES NetCDF files to concatenate"
 
 if [ -z "$NC_FILES" ]; then
@@ -301,40 +345,15 @@ if [ -z "$NC_FILES" ]; then
     exit 1
 fi
 
-# Check for ncrcat (NCO)
+# Use NCO ncrcat for concatenation
 if command -v ncrcat &> /dev/null; then
     echo "Using NCO ncrcat for concatenation..."
     ncrcat -O $NC_FILES ${OUTPUT_DIR}/${DBASE_LOWER}_forcing_raw.nc
     CONCAT_STATUS=$?
 else
-    echo "WARNING: ncrcat not found, trying Python..."
-
-    # Unset LD_PRELOAD for Python
-    SAVE_LD_PRELOAD=$LD_PRELOAD
-    unset LD_PRELOAD
-
-    python3 << EOF
-import xarray as xr
-import glob
-import os
-
-temp_dir = "${TEMP_DIR}"
-output_file = "${OUTPUT_DIR}/${DBASE_LOWER}_forcing_raw.nc"
-pattern = os.path.join(temp_dir, "${DBASE_LOWER}_*.nc")
-
-files = sorted(glob.glob(pattern))
-print(f"Concatenating {len(files)} files...")
-
-if files:
-    ds = xr.open_mfdataset(files, combine='by_coords')
-    ds.to_netcdf(output_file)
-    print(f"Created: {output_file}")
-else:
-    print("ERROR: No files found")
-    exit(1)
-EOF
-    CONCAT_STATUS=$?
-    export LD_PRELOAD=$SAVE_LD_PRELOAD
+    echo "ERROR: ncrcat not found. Please load NCO module."
+    rm -rf $TEMP_DIR
+    exit 1
 fi
 
 if [ $CONCAT_STATUS -ne 0 ] || [ ! -s ${OUTPUT_DIR}/${DBASE_LOWER}_forcing_raw.nc ]; then
@@ -352,10 +371,9 @@ echo ""
 echo "Step 3: Adding CF-compliance attributes..."
 echo "============================================"
 
-# Copy to final output file
 cp ${OUTPUT_DIR}/${DBASE_LOWER}_forcing_raw.nc $OUTPUT_FILE
 
-# Add global attributes using ncatted if available
+# Add global attributes
 if command -v ncatted &> /dev/null; then
     ncatted -h -a Conventions,global,o,c,"CF-1.6" $OUTPUT_FILE
     ncatted -h -a title,global,o,c,"${DBASE_UPPER} forcing data for UFS-Coastal DATM" $OUTPUT_FILE
@@ -364,15 +382,15 @@ if command -v ncatted &> /dev/null; then
     ncatted -h -a history,global,o,c,"Created by nos_ofs_create_datm_forcing.sh on $(date)" $OUTPUT_FILE
 
     # Add coordinate attributes
-    ncatted -h -a units,longitude,o,c,"degrees_east" $OUTPUT_FILE 2>/dev/null
-    ncatted -h -a axis,longitude,o,c,"X" $OUTPUT_FILE 2>/dev/null
-    ncatted -h -a standard_name,longitude,o,c,"longitude" $OUTPUT_FILE 2>/dev/null
+    ncatted -h -a units,longitude,o,c,"degrees_east" $OUTPUT_FILE
+    ncatted -h -a axis,longitude,o,c,"X" $OUTPUT_FILE
+    ncatted -h -a standard_name,longitude,o,c,"longitude" $OUTPUT_FILE
 
-    ncatted -h -a units,latitude,o,c,"degrees_north" $OUTPUT_FILE 2>/dev/null
-    ncatted -h -a axis,latitude,o,c,"Y" $OUTPUT_FILE 2>/dev/null
-    ncatted -h -a standard_name,latitude,o,c,"latitude" $OUTPUT_FILE 2>/dev/null
+    ncatted -h -a units,latitude,o,c,"degrees_north" $OUTPUT_FILE
+    ncatted -h -a axis,latitude,o,c,"Y" $OUTPUT_FILE
+    ncatted -h -a standard_name,latitude,o,c,"latitude" $OUTPUT_FILE
 
-    ncatted -h -a axis,time,o,c,"T" $OUTPUT_FILE 2>/dev/null
+    ncatted -h -a axis,time,o,c,"T" $OUTPUT_FILE
 fi
 
 echo "Created: $OUTPUT_FILE"
@@ -384,11 +402,8 @@ echo ""
 echo "Step 4: Verifying output..."
 echo "============================================"
 
-# Get time dimension info
 if command -v ncdump &> /dev/null; then
     TIME_STEPS=$(ncdump -h $OUTPUT_FILE | grep "time = " | head -1 | sed 's/.*time = \([0-9]*\).*/\1/')
-else
-    TIME_STEPS="unknown"
 fi
 FILE_SIZE=$(ls -lh $OUTPUT_FILE | awk '{print $5}')
 
@@ -397,7 +412,6 @@ echo "File size:   $FILE_SIZE"
 echo "Time steps:  $TIME_STEPS"
 echo ""
 
-# Show variables if ncdump available
 if command -v ncdump &> /dev/null; then
     echo "Variables:"
     ncdump -h $OUTPUT_FILE | grep -E "^\s+(float|double)" | head -10
