@@ -1566,21 +1566,21 @@ if [ "$GENERATE_ESMF_MESH" == "true" ] && [ $OCEAN_MODEL == 'SCHISM' -o $OCEAN_M
     DATM_FORCING_SCRIPT="${USHnos}/nos_ofs_create_datm_forcing.sh"
 
     if [ -s "$DATM_FORCING_SCRIPT" ]; then
-      # Calculate time range (same as sflux: 6 hours before cycle to forecastend)
-      # GFS/HRRR sflux starts at time_hotstart (6h before cycle), not later
+      # Calculate time range (same as sflux: 3 hours before cycle to forecastend+3h)
+      # sflux actually starts at 21Z for 00Z cycle (3h before, not 6h)
       # Use TIME_START and TIME_END from parent script if available
       if [ -n "$TIME_START" ] && [ -n "$TIME_END" ]; then
-        # TIME_START from nowcast is usually the cycle time, so go back 6h for full coverage
-        DATM_TIME_START=$($NDATE -6 $TIME_START)
-        DATM_TIME_END=$TIME_END
+        # TIME_START from nowcast is usually the cycle time, so go back 3h to match sflux
+        DATM_TIME_START=$($NDATE -3 $TIME_START)
+        DATM_TIME_END=$($NDATE 3 $TIME_END)  # sflux ends 3h after forecastend
       elif [ -n "$time_hotstart" ] && [ -n "$time_forecastend" ]; then
-        # time_hotstart is already 6h before cycle, use it directly
-        DATM_TIME_START=$time_hotstart
-        DATM_TIME_END=$time_forecastend
+        # Adjust time_hotstart by +3h to match sflux start (21Z instead of 18Z)
+        DATM_TIME_START=$($NDATE 3 $time_hotstart)
+        DATM_TIME_END=$($NDATE 3 $time_forecastend)
       else
-        # Fallback: use current cycle with 48-hour forecast
-        DATM_TIME_START=$($NDATE -6 ${PDY}${cyc})  # 6 hours before cycle (nowcast start)
-        DATM_TIME_END=$($NDATE ${LEN_FORECAST:-48} ${PDY}${cyc})
+        # Fallback: use current cycle with 48-hour forecast + 3h to match sflux
+        DATM_TIME_START=$($NDATE -3 ${PDY}${cyc})  # 3 hours before cycle (matches sflux)
+        DATM_TIME_END=$($NDATE $((${LEN_FORECAST:-48} + 3)) ${PDY}${cyc})  # +3h to match sflux end
       fi
 
       echo "DATM Time Range: $DATM_TIME_START to $DATM_TIME_END"
