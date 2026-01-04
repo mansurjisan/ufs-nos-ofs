@@ -134,16 +134,14 @@ fi
 
 # =============================================================================
 # Function: Find GFS file for a valid time
-# Strategy: Use base cycle (typically 18Z for 00Z run) with extended forecasts
+# Strategy: Use base cycle with extended forecasts (up to f120 = 5 days)
+# For operational runs, cycles from future dates won't exist, so we must
+# go back far enough to find an available cycle
 # =============================================================================
 find_gfs_file() {
     local VALID_TIME=$1
     local VALID_DATE=$(echo $VALID_TIME | cut -c1-8)
     local VALID_HH=$(echo $VALID_TIME | cut -c9-10)
-
-    # Try cycles in order of preference: 18Z, 12Z, 06Z, 00Z from previous days
-    # Start with the cycle 6 hours before valid time, then go backwards
-    local VALID_EPOCH=$($NDATE 0 $VALID_TIME | cut -c1-10)
 
     # Calculate initial cycle (6 hours before valid time, rounded down to 00/06/12/18)
     local INIT_CYCLE_TIME=$($NDATE -6 $VALID_TIME)
@@ -156,8 +154,9 @@ find_gfs_file() {
     local CYCLE_DATE=$INIT_DATE
     local CYCLE_TIME="${CYCLE_DATE}${CYCLE_HH}"
 
-    # Try up to 4 cycles (going back 24 hours)
-    for attempt in 1 2 3 4; do
+    # Try up to 12 cycles (going back 72 hours) to handle operational scenarios
+    # where future cycles don't exist yet. GFS f120 covers 5 days ahead.
+    for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
         local FHR=$($NHOUR $VALID_TIME $CYCLE_TIME 2>/dev/null || echo "-1")
 
         # Skip if FHR is negative or too large
