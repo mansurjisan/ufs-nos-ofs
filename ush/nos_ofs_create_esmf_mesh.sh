@@ -162,14 +162,37 @@ echo ""
 echo "Step 2: Adding ESMF/CF attributes..."
 echo "============================================"
 
-# Check for Python preprocessing script (in pysh subdirectory)
-MODIFY_SCRIPT="${USHnos}/pysh/modify_${DBASE_LOWER}_4_esmfmesh.py"
-if [ ! -s "$MODIFY_SCRIPT" ]; then
-    echo "ERROR: Preprocessing script not found: $MODIFY_SCRIPT"
-    exit 1
+# Try NCO method first (more reliable on WCOSS2), fall back to Python
+NCO_SCRIPT="${USHnos}/modify_${DBASE_LOWER}_nco.sh"
+PYTHON_SCRIPT="${USHnos}/pysh/modify_${DBASE_LOWER}_4_esmfmesh.py"
+
+if [ -s "$NCO_SCRIPT" ] && command -v ncatted &> /dev/null; then
+    echo "Using NCO method (recommended for WCOSS2)..."
+    bash $NCO_SCRIPT $RAW_NC $ESMF_NC
+    NCO_STATUS=$?
+    if [ $NCO_STATUS -ne 0 ] || [ ! -s $ESMF_NC ]; then
+        echo "WARNING: NCO method failed, trying Python method..."
+        rm -f $ESMF_NC
+    fi
 fi
 
-python3 $MODIFY_SCRIPT $RAW_NC $ESMF_NC
+# Fall back to Python if NCO failed or not available
+if [ ! -s $ESMF_NC ]; then
+    if [ -s "$PYTHON_SCRIPT" ]; then
+        echo "Using Python method..."
+        # Unset LD_PRELOAD to avoid conflicts with Python's netCDF4
+        # (Same approach used in nos_ofs_create_forcing_river.sh)
+        SAVE_LD_PRELOAD=$LD_PRELOAD
+        unset LD_PRELOAD
+        python3 $PYTHON_SCRIPT $RAW_NC $ESMF_NC
+        export LD_PRELOAD=$SAVE_LD_PRELOAD
+    else
+        echo "ERROR: Neither NCO nor Python script found"
+        echo "  NCO script: $NCO_SCRIPT"
+        echo "  Python script: $PYTHON_SCRIPT"
+        exit 1
+    fi
+fi
 
 if [ ! -s $ESMF_NC ]; then
     echo "ERROR: Failed to create $ESMF_NC"
@@ -186,19 +209,36 @@ echo ""
 echo "Step 3: Generating SCRIP grid..."
 echo "============================================"
 
-# Check for Python SCRIP generation script (in pysh subdirectory)
+# Python SCRIP generation script
 SCRIP_SCRIPT="${USHnos}/pysh/proc_scrip.py"
-if [ ! -s "$SCRIP_SCRIPT" ]; then
-    echo "ERROR: Python SCRIP script not found: $SCRIP_SCRIPT"
-    exit 1
-fi
 
-# Run Python to generate SCRIP grid
-# This script handles both rectilinear (GFS) and curvilinear (HRRR) grids
-python3 $SCRIP_SCRIPT --ifile $ESMF_NC --ofile $(basename $SCRIP_NC) --odir $OUTPUT_DIR
+if [ -s "$SCRIP_SCRIPT" ]; then
+    echo "Using Python SCRIP generator..."
+    # Unset LD_PRELOAD to avoid conflicts with Python's netCDF4
+    SAVE_LD_PRELOAD=$LD_PRELOAD
+    unset LD_PRELOAD
+    # Run Python to generate SCRIP grid
+    # This script handles both rectilinear (GFS) and curvilinear (HRRR) grids
+    python3 $SCRIP_SCRIPT --ifile $ESMF_NC --ofile $(basename $SCRIP_NC) --odir $OUTPUT_DIR
+    SCRIP_STATUS=$?
+    export LD_PRELOAD=$SAVE_LD_PRELOAD
+
+    if [ $SCRIP_STATUS -ne 0 ] || [ ! -s $SCRIP_NC ]; then
+        echo "WARNING: Python SCRIP generation failed (exit code: $SCRIP_STATUS)"
+        echo "This may be due to Python/library issues on this system"
+    fi
+else
+    echo "WARNING: Python SCRIP script not found: $SCRIP_SCRIPT"
+fi
 
 if [ ! -s $SCRIP_NC ]; then
     echo "ERROR: Failed to create $SCRIP_NC"
+    echo ""
+    echo "Troubleshooting:"
+    echo "  1. Check Python version: python3 --version"
+    echo "  2. Check xarray: python3 -c 'import xarray; print(xarray.__version__)'"
+    echo "  3. Check netCDF4: python3 -c 'import netCDF4; print(netCDF4.__version__)'"
+    echo "  4. Try running manually: python3 $SCRIP_SCRIPT --ifile $ESMF_NC --ofile $(basename $SCRIP_NC) --odir $OUTPUT_DIR"
     exit 1
 fi
 
