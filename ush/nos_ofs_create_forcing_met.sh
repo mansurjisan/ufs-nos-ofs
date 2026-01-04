@@ -1550,6 +1550,53 @@ if [ "$GENERATE_ESMF_MESH" == "true" ] && [ $OCEAN_MODEL == 'SCHISM' -o $OCEAN_M
   echo "============================================"
 
   # =========================================================================
+  # Generate DATM Forcing Files (concatenated time-series)
+  # =========================================================================
+  # Create forcing files with all forecast hours for DATM
+  # This loops through all GRIB2 files and concatenates them
+  # =========================================================================
+  GENERATE_DATM_FORCING=${GENERATE_DATM_FORCING:-true}
+
+  if [ "$GENERATE_DATM_FORCING" == "true" ]; then
+    echo ""
+    echo "============================================"
+    echo "Generating DATM Forcing Files"
+    echo "============================================"
+
+    DATM_FORCING_SCRIPT="${USHnos}/nos_ofs_create_datm_forcing.sh"
+
+    if [ -s "$DATM_FORCING_SCRIPT" ]; then
+      export NHOURS=${LEN_FORECAST:-48}
+
+      # Generate GFS forcing file
+      echo "Creating GFS forcing file..."
+      $DATM_FORCING_SCRIPT GFS25 "$ESMF_OUTPUT_DIR" 2>&1 | tee ${ESMF_OUTPUT_DIR}/gfs_forcing.log
+
+      if [ -s ${ESMF_OUTPUT_DIR}/gfs_forcing.nc ]; then
+        cp -p ${ESMF_OUTPUT_DIR}/gfs_forcing.nc $COMOUT/${PREFIXNOS}.t${cyc}z.gfs_forcing.nc
+        echo "Created: $COMOUT/${PREFIXNOS}.t${cyc}z.gfs_forcing.nc"
+      fi
+
+      # Generate HRRR forcing file (if HRRR is enabled)
+      if [ "${USE_HRRR:-true}" == "true" ]; then
+        echo "Creating HRRR forcing file..."
+        $DATM_FORCING_SCRIPT HRRR "$ESMF_OUTPUT_DIR" 2>&1 | tee ${ESMF_OUTPUT_DIR}/hrrr_forcing.log
+
+        if [ -s ${ESMF_OUTPUT_DIR}/hrrr_forcing.nc ]; then
+          cp -p ${ESMF_OUTPUT_DIR}/hrrr_forcing.nc $COMOUT/${PREFIXNOS}.t${cyc}z.hrrr_forcing.nc
+          echo "Created: $COMOUT/${PREFIXNOS}.t${cyc}z.hrrr_forcing.nc"
+        fi
+      fi
+
+      echo "DATM forcing generation completed at: " `date`
+    else
+      echo "WARNING: DATM forcing script not found: $DATM_FORCING_SCRIPT"
+    fi
+
+    echo "============================================"
+  fi
+
+  # =========================================================================
   # Generate UFS-Coastal Configuration Files
   # =========================================================================
   # Generate runtime config files (model_configure, datm_in, datm.streams)
