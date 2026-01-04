@@ -1566,17 +1566,20 @@ if [ "$GENERATE_ESMF_MESH" == "true" ] && [ $OCEAN_MODEL == 'SCHISM' -o $OCEAN_M
     DATM_FORCING_SCRIPT="${USHnos}/nos_ofs_create_datm_forcing.sh"
 
     if [ -s "$DATM_FORCING_SCRIPT" ]; then
-      # Calculate time range (same as sflux: 3 hours before hotstart to forecastend)
+      # Calculate time range (same as sflux: 6 hours before cycle to forecastend)
+      # GFS/HRRR sflux starts at time_hotstart (6h before cycle), not later
       # Use TIME_START and TIME_END from parent script if available
       if [ -n "$TIME_START" ] && [ -n "$TIME_END" ]; then
-        DATM_TIME_START=$($NDATE -3 $TIME_START)
+        # TIME_START from nowcast is usually the cycle time, so go back 6h for full coverage
+        DATM_TIME_START=$($NDATE -6 $TIME_START)
         DATM_TIME_END=$TIME_END
       elif [ -n "$time_hotstart" ] && [ -n "$time_forecastend" ]; then
-        DATM_TIME_START=$($NDATE -3 $time_hotstart)
+        # time_hotstart is already 6h before cycle, use it directly
+        DATM_TIME_START=$time_hotstart
         DATM_TIME_END=$time_forecastend
       else
         # Fallback: use current cycle with 48-hour forecast
-        DATM_TIME_START=$($NDATE -9 ${PDY}${cyc})  # 9 hours before cycle (6h nowcast + 3h buffer)
+        DATM_TIME_START=$($NDATE -6 ${PDY}${cyc})  # 6 hours before cycle (nowcast start)
         DATM_TIME_END=$($NDATE ${LEN_FORECAST:-48} ${PDY}${cyc})
       fi
 

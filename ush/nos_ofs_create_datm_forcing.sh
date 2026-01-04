@@ -161,8 +161,10 @@ find_gfs_file() {
         local FHR=$($NHOUR $VALID_TIME $CYCLE_TIME 2>/dev/null || echo "-1")
 
         # Skip if FHR is negative or too large
-        if [ "$FHR" -ge 0 ] && [ "$FHR" -le 120 ]; then
-            local FHR_STR=$(printf "%03d" $FHR)
+        # Use 10# to force decimal interpretation (nhour can return "09" which is invalid octal)
+        local FHR_DEC=$((10#$FHR))
+        if [ "$FHR_DEC" -ge 0 ] && [ "$FHR_DEC" -le 120 ]; then
+            local FHR_STR=$(printf "%03d" $FHR_DEC)
             local GRIB2_FILE="${COMIN}/gfs.${CYCLE_DATE}/${CYCLE_HH}/atmos/gfs.t${CYCLE_HH}z.pgrb2.0p25.f${FHR_STR}"
 
             if [ -s "$GRIB2_FILE" ]; then
@@ -217,7 +219,8 @@ find_hrrr_file() {
     # Strategy 2: For times after run cycle, use run cycle with extended forecasts
     # (This matches Machuan's approach for forecast period)
     if [ "$HOURS_FROM_CYCLE" -gt 0 ]; then
-        local FHR=$HOURS_FROM_CYCLE
+        # Use 10# to force decimal interpretation (nhour can return "09" which is invalid octal)
+        local FHR=$((10#$HOURS_FROM_CYCLE))
         if [ "$FHR" -ge 1 ] && [ "$FHR" -le 48 ]; then
             local FHR_STR=$(printf "%02d" $FHR)
             local GRIB2_FILE="${COMIN}/hrrr.${PDY}/conus/hrrr.t${cyc}z.wrfsfcf${FHR_STR}.grib2"
@@ -255,8 +258,10 @@ find_hrrr_file() {
         local CYCLE_DATE=$(echo $CYCLE_TIME | cut -c1-8)
         local CYCLE_HH_STR=$(echo $CYCLE_TIME | cut -c9-10)
 
-        if [ "$FHR" -ge 1 ] && [ "$FHR" -le 48 ]; then
-            local FHR_STR=$(printf "%02d" $FHR)
+        # Use 10# to force decimal interpretation (nhour can return "09" which is invalid octal)
+        local FHR_DEC=$((10#$FHR))
+        if [ "$FHR_DEC" -ge 1 ] && [ "$FHR_DEC" -le 48 ]; then
+            local FHR_STR=$(printf "%02d" $FHR_DEC)
             local GRIB2_FILE="${COMIN}/hrrr.${CYCLE_DATE}/conus/hrrr.t${CYCLE_HH_STR}z.wrfsfcf${FHR_STR}.grib2"
             if [ -s "$GRIB2_FILE" ]; then
                 echo "$GRIB2_FILE"
