@@ -7,8 +7,18 @@ export DBASE_MET_FOR=GFS
 export DBASE_MET_NOW2=HRRR
 export DBASE_MET_FOR2=HRRR
 
-# ESMF mesh generation for UFS-Coastal DATM (set to true to enable)
+# =============================================================================
+# UFS-Coastal DATM Configuration
+# =============================================================================
+# GENERATE_ESMF_MESH    : Generate ESMF mesh files (true/false)
+# GENERATE_DATM_FORCING : Create concatenated forcing files (true/false)
+# GENERATE_UFS_CONFIG   : Generate UFS config files (true/false)
+# USE_HRRR              : Include HRRR forcing (true/false, auto-detected)
+# =============================================================================
 export GENERATE_ESMF_MESH=false
+export GENERATE_DATM_FORCING=true
+export GENERATE_UFS_CONFIG=true
+export USE_HRRR=true
 
 export DBASE_WL_NOW=RTOFS
 export DBASE_WL_FOR=RTOFS
