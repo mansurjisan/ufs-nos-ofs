@@ -179,12 +179,14 @@ while [ $CURRENT_TIME -le $TIME_END ]; do
         CYCLE_TIME="${CYCLE_DATE}${CYCLE}"
         FHR=$($NHOUR $CURRENT_TIME $CYCLE_TIME 2>/dev/null || echo "0")
 
-        # If FHR is negative, use previous cycle
-        if [ $FHR -lt 0 ]; then
+        # If FHR is negative or zero, use previous cycle
+        # IMPORTANT: f000 (analysis) files don't have radiation fields (DSWRF, DLWRF)
+        # We must use forecast files (f003+) to get all variables
+        if [ $FHR -le 0 ]; then
             CYCLE_TIME=$($NDATE -6 $CYCLE_TIME)
             CYCLE_DATE=$(echo $CYCLE_TIME | cut -c1-8)
             CYCLE=$(echo $CYCLE_TIME | cut -c9-10)
-            FHR=$($NHOUR $CURRENT_TIME $CYCLE_TIME 2>/dev/null || echo "0")
+            FHR=$($NHOUR $CURRENT_TIME $CYCLE_TIME 2>/dev/null || echo "6")
         fi
 
         FHR_STR=$(printf "%03d" $FHR)
@@ -192,18 +194,27 @@ while [ $CURRENT_TIME -le $TIME_END ]; do
 
     else  # HRRR
         # HRRR has hourly cycles, but we prefer cycles with longer forecasts (00,06,12,18)
+        # IMPORTANT: f00 (analysis) files don't have radiation fields (DSWRF, DLWRF)
+        # We must use forecast files (f01+) to get all variables
         HH_NUM=$((10#$HH))
 
-        # Try current hour cycle first, then fall back to main cycles
-        for TRY_CYCLE in $HH 00 06 12 18; do
+        # Try previous hour cycle first (so FHR >= 1), then fall back to main cycles
+        PREV_HH=$(printf "%02d" $(( (HH_NUM + 23) % 24 )))  # Previous hour
+        for TRY_CYCLE in $PREV_HH 00 06 12 18; do
             TRY_CYCLE=$(printf "%02d" $((10#$TRY_CYCLE)))
             CYCLE_DATE="${YYYY}${MM}${DD}"
-            CYCLE_TIME="${CYCLE_DATE}${TRY_CYCLE}"
 
+            # Adjust date if trying previous hour crossed midnight
+            if [ "$TRY_CYCLE" == "$PREV_HH" ] && [ $HH_NUM -eq 0 ]; then
+                CYCLE_DATE=$($NDATE -24 ${CYCLE_DATE}00 | cut -c1-8)
+            fi
+
+            CYCLE_TIME="${CYCLE_DATE}${TRY_CYCLE}"
             FHR=$($NHOUR $CURRENT_TIME $CYCLE_TIME 2>/dev/null || echo "-1")
 
-            # Check if FHR is valid (0-48 for main cycles, 0-18 for others)
-            if [ $FHR -ge 0 ]; then
+            # Check if FHR is valid (1-48 for main cycles, 1-18 for others)
+            # Skip FHR=0 to avoid analysis files
+            if [ $FHR -ge 1 ]; then
                 if [ "$TRY_CYCLE" == "00" ] || [ "$TRY_CYCLE" == "06" ] || [ "$TRY_CYCLE" == "12" ] || [ "$TRY_CYCLE" == "18" ]; then
                     MAX_FHR=48
                 else
@@ -217,13 +228,14 @@ while [ $CURRENT_TIME -le $TIME_END ]; do
             fi
         done
 
-        # If still negative, try previous day's cycles
-        if [ $FHR -lt 0 ] || [ $FHR -gt 48 ]; then
-            PREV_DATE=$($NDATE -24 ${CYCLE_DATE}00 | cut -c1-8)
-            for TRY_CYCLE in 18 12 06 00; do
+        # If still invalid, try previous day's cycles
+        if [ $FHR -lt 1 ] || [ $FHR -gt 48 ]; then
+            PREV_DATE=$($NDATE -24 ${YYYY}${MM}${DD}00 | cut -c1-8)
+            for TRY_CYCLE in 23 18 12 06 00; do
+                TRY_CYCLE=$(printf "%02d" $TRY_CYCLE)
                 CYCLE_TIME="${PREV_DATE}${TRY_CYCLE}"
                 FHR=$($NHOUR $CURRENT_TIME $CYCLE_TIME 2>/dev/null || echo "-1")
-                if [ $FHR -ge 0 ] && [ $FHR -le 48 ]; then
+                if [ $FHR -ge 1 ] && [ $FHR -le 48 ]; then
                     CYCLE_DATE=$PREV_DATE
                     CYCLE=$TRY_CYCLE
                     break
