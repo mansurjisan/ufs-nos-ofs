@@ -1552,8 +1552,8 @@ if [ "$GENERATE_ESMF_MESH" == "true" ] && [ $OCEAN_MODEL == 'SCHISM' -o $OCEAN_M
   # =========================================================================
   # Generate DATM Forcing Files (concatenated time-series)
   # =========================================================================
-  # Create forcing files with all forecast hours for DATM
-  # This loops through all GRIB2 files and concatenates them
+  # Create forcing files with all nowcast+forecast hours for DATM
+  # This mimics sflux time coverage: time_hotstart-3h to time_forecastend
   # =========================================================================
   GENERATE_DATM_FORCING=${GENERATE_DATM_FORCING:-true}
 
@@ -1566,11 +1566,25 @@ if [ "$GENERATE_ESMF_MESH" == "true" ] && [ $OCEAN_MODEL == 'SCHISM' -o $OCEAN_M
     DATM_FORCING_SCRIPT="${USHnos}/nos_ofs_create_datm_forcing.sh"
 
     if [ -s "$DATM_FORCING_SCRIPT" ]; then
-      export NHOURS=${LEN_FORECAST:-48}
+      # Calculate time range (same as sflux: 3 hours before hotstart to forecastend)
+      # Use TIME_START and TIME_END from parent script if available
+      if [ -n "$TIME_START" ] && [ -n "$TIME_END" ]; then
+        DATM_TIME_START=$($NDATE -3 $TIME_START)
+        DATM_TIME_END=$TIME_END
+      elif [ -n "$time_hotstart" ] && [ -n "$time_forecastend" ]; then
+        DATM_TIME_START=$($NDATE -3 $time_hotstart)
+        DATM_TIME_END=$time_forecastend
+      else
+        # Fallback: use current cycle with 48-hour forecast
+        DATM_TIME_START=$($NDATE -9 ${PDY}${cyc})  # 9 hours before cycle (6h nowcast + 3h buffer)
+        DATM_TIME_END=$($NDATE ${LEN_FORECAST:-48} ${PDY}${cyc})
+      fi
+
+      echo "DATM Time Range: $DATM_TIME_START to $DATM_TIME_END"
 
       # Generate GFS forcing file
       echo "Creating GFS forcing file..."
-      $DATM_FORCING_SCRIPT GFS25 "$ESMF_OUTPUT_DIR" 2>&1 | tee ${ESMF_OUTPUT_DIR}/gfs_forcing.log
+      $DATM_FORCING_SCRIPT GFS25 "$ESMF_OUTPUT_DIR" "$DATM_TIME_START" "$DATM_TIME_END" 2>&1 | tee ${ESMF_OUTPUT_DIR}/gfs_forcing.log
 
       if [ -s ${ESMF_OUTPUT_DIR}/gfs_forcing.nc ]; then
         cp -p ${ESMF_OUTPUT_DIR}/gfs_forcing.nc $COMOUT/${PREFIXNOS}.t${cyc}z.gfs_forcing.nc
@@ -1580,7 +1594,7 @@ if [ "$GENERATE_ESMF_MESH" == "true" ] && [ $OCEAN_MODEL == 'SCHISM' -o $OCEAN_M
       # Generate HRRR forcing file (if HRRR is enabled)
       if [ "${USE_HRRR:-true}" == "true" ]; then
         echo "Creating HRRR forcing file..."
-        $DATM_FORCING_SCRIPT HRRR "$ESMF_OUTPUT_DIR" 2>&1 | tee ${ESMF_OUTPUT_DIR}/hrrr_forcing.log
+        $DATM_FORCING_SCRIPT HRRR "$ESMF_OUTPUT_DIR" "$DATM_TIME_START" "$DATM_TIME_END" 2>&1 | tee ${ESMF_OUTPUT_DIR}/hrrr_forcing.log
 
         if [ -s ${ESMF_OUTPUT_DIR}/hrrr_forcing.nc ]; then
           cp -p ${ESMF_OUTPUT_DIR}/hrrr_forcing.nc $COMOUT/${PREFIXNOS}.t${cyc}z.hrrr_forcing.nc
