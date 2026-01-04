@@ -55,26 +55,40 @@ git add pbs/
 git add scripts/
 git add versions/
 
-# Add ush scripts
+# Add ush scripts (main operational scripts)
 echo ""
 echo "Step 4: Adding ush scripts..."
 git add ush/*.sh
 git add ush/pysh/*.py
 
+# Add UFS-Coastal operational scripts (new organized directory)
+echo ""
+echo "Step 5: Adding UFS-Coastal scripts..."
+git add ush/ufs_coastal/*.sh
+git add ush/ufs_coastal/*.md
+git add ush/ufs_coastal/pysh/*.py
+
+# Add experimental/YAML-based scripts
+echo ""
+echo "Step 6: Adding experimental scripts..."
+git add ush/experimental/*.py
+git add ush/experimental/*.sh
+
 # Force-add UFS templates from fix/secofs (normally ignored)
 echo ""
-echo "Step 5: Force-adding UFS templates from fix/secofs..."
+echo "Step 7: Force-adding UFS templates from fix/secofs..."
 git add -f fix/secofs/secofs.ctl
 git add -f fix/secofs/ufs.configure
 git add -f fix/secofs/model_configure.template
 git add -f fix/secofs/datm_in.template
 git add -f fix/secofs/datm.streams.template
+git add -f fix/secofs/secofs.param.nml.ufs 2>/dev/null || true
 
 # Add documentation
 echo ""
-echo "Step 6: Adding documentation..."
+echo "Step 8: Adding documentation..."
+git add docs/*.md 2>/dev/null || true
 git add *.md 2>/dev/null || true
-git add -f secofs_test_run/outputs_06z/esmf_mesh/SECOFS_UFS_COASTAL_TRANSITION.md 2>/dev/null || true
 
 # Add this setup script
 git add git_setup.sh
