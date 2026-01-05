@@ -37,5 +37,5 @@ Key scripts:
 
 ## Related
 
-- [UFS-Coastal](https://github.com/ufs-community/ufs-coastal)
+- [UFS-Coastal](https://github.com/oceanmodeling/ufs-weather-model)
 - [CDEPS](https://github.com/ESCOMP/CDEPS)
