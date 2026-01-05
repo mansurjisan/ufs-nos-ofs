@@ -11,6 +11,7 @@
 docs/
 SECOFS_UFS_TRANSITION_PLAN.md
 WCOSS2_UFS_TESTING.md
+git_setup.sh
 
 # -----------------------------------------------------------------------------
 # Executables and Libraries (compiled binaries)
