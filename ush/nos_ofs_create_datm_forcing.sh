@@ -183,27 +183,82 @@ find_gfs_file() {
 }
 
 # =============================================================================
-# Function: Find HRRR file for a valid time
-# Strategy:
-#   - For past hours: Use hourly cycles with f01 (previous hour's cycle)
-#   - For future hours: Use 00Z/06Z/12Z/18Z cycle with extended forecasts
+# Function: Find HRRR base cycle (matches SFLUX logic)
+# Strategy: Find the latest hourly cycle that has f48 available
+#           Use this SINGLE cycle for ALL valid times with extended forecasts
+# This ensures DATM and SFLUX use identical HRRR data sources
+# =============================================================================
+HRRR_BASE_CYCLE=""
+HRRR_BASE_DATE=""
+
+find_hrrr_base_cycle() {
+    # Only find once - cache result
+    if [ -n "$HRRR_BASE_CYCLE" ] && [ -n "$HRRR_BASE_DATE" ]; then
+        return 0
+    fi
+
+    echo "  Finding HRRR base cycle with f48 available..."
+
+    # Start from TIME_START and search backward for cycles with f48
+    local SEARCH_TIME=$TIME_START
+    local SEARCH_DATE=$(echo $SEARCH_TIME | cut -c1-8)
+
+    # Search up to 48 hours back
+    for back_days in 0 1 2; do
+        local CHECK_DATE=$($NDATE -$((back_days * 24)) ${SEARCH_DATE}00 | cut -c1-8)
+
+        # Check each hourly cycle (23 down to 00)
+        for cycle_hr in 23 22 21 20 19 18 17 16 15 14 13 12 11 10 09 08 07 06 05 04 03 02 01 00; do
+            local CYCLE_STR=$(printf "%02d" $((10#$cycle_hr)))
+            local TEST_FILE="${COMIN}/hrrr.${CHECK_DATE}/conus/hrrr.t${CYCLE_STR}z.wrfsfcf48.grib2"
+
+            if [ -s "$TEST_FILE" ] || [ -s "${TEST_FILE}.idx" ]; then
+                HRRR_BASE_DATE=$CHECK_DATE
+                HRRR_BASE_CYCLE=$CYCLE_STR
+                echo "  Found HRRR base cycle: ${HRRR_BASE_DATE} ${HRRR_BASE_CYCLE}z (has f48)"
+                return 0
+            fi
+        done
+    done
+
+    echo "WARNING: No HRRR cycle with f48 found, falling back to latest available"
+    return 1
+}
+
+# =============================================================================
+# Function: Find HRRR file for a valid time (SFLUX-matching logic)
+# Uses single base cycle with extended forecast hours (f01-f48)
 # =============================================================================
 find_hrrr_file() {
     local VALID_TIME=$1
-    local VALID_DATE=$(echo $VALID_TIME | cut -c1-8)
-    local VALID_HH=$(echo $VALID_TIME | cut -c9-10)
-    local VALID_HH_NUM=$((10#$VALID_HH))
 
-    # Current run cycle time
-    local RUN_CYCLE_TIME="${PDY}${cyc}"
+    # Ensure we have the base cycle
+    find_hrrr_base_cycle
 
-    # Check if this valid time is before or after the run cycle
-    local HOURS_FROM_CYCLE=$($NHOUR $VALID_TIME $RUN_CYCLE_TIME 2>/dev/null || echo "0")
+    if [ -z "$HRRR_BASE_CYCLE" ] || [ -z "$HRRR_BASE_DATE" ]; then
+        echo ""
+        return 1
+    fi
 
-    # Strategy 1: For times before or at run cycle, use hourly cycles with f01
-    # (This matches Machuan's approach for nowcast period)
-    if [ "$HOURS_FROM_CYCLE" -le 0 ]; then
-        # Use previous hour's cycle with f01
+    # Calculate forecast hour from base cycle to valid time
+    local BASE_TIME="${HRRR_BASE_DATE}${HRRR_BASE_CYCLE}"
+    local FHR=$($NHOUR $VALID_TIME $BASE_TIME 2>/dev/null || echo "-1")
+
+    # Handle decimal interpretation
+    local FHR_DEC=$((10#$FHR))
+
+    if [ "$FHR_DEC" -ge 1 ] && [ "$FHR_DEC" -le 48 ]; then
+        local FHR_STR=$(printf "%02d" $FHR_DEC)
+        local GRIB2_FILE="${COMIN}/hrrr.${HRRR_BASE_DATE}/conus/hrrr.t${HRRR_BASE_CYCLE}z.wrfsfcf${FHR_STR}.grib2"
+
+        if [ -s "$GRIB2_FILE" ]; then
+            echo "$GRIB2_FILE"
+            return 0
+        fi
+    fi
+
+    # Fallback: try hourly cycle with f01 if forecast hour out of range
+    if [ "$FHR_DEC" -lt 1 ] || [ "$FHR_DEC" -gt 48 ]; then
         local PREV_HOUR_TIME=$($NDATE -1 $VALID_TIME)
         local PREV_DATE=$(echo $PREV_HOUR_TIME | cut -c1-8)
         local PREV_HH=$(echo $PREV_HOUR_TIME | cut -c9-10)
@@ -214,63 +269,6 @@ find_hrrr_file() {
             return 0
         fi
     fi
-
-    # Strategy 2: For times after run cycle, use run cycle with extended forecasts
-    # (This matches Machuan's approach for forecast period)
-    if [ "$HOURS_FROM_CYCLE" -gt 0 ]; then
-        # Use 10# to force decimal interpretation (nhour can return "09" which is invalid octal)
-        local FHR=$((10#$HOURS_FROM_CYCLE))
-        if [ "$FHR" -ge 1 ] && [ "$FHR" -le 48 ]; then
-            local FHR_STR=$(printf "%02d" $FHR)
-            local GRIB2_FILE="${COMIN}/hrrr.${PDY}/conus/hrrr.t${cyc}z.wrfsfcf${FHR_STR}.grib2"
-            if [ -s "$GRIB2_FILE" ]; then
-                echo "$GRIB2_FILE"
-                return 0
-            fi
-        fi
-    fi
-
-    # Strategy 3: Fallback - try previous hourly cycles with f01
-    for back_hours in 1 2 3 4; do
-        local TRY_TIME=$($NDATE -$back_hours $VALID_TIME)
-        local TRY_DATE=$(echo $TRY_TIME | cut -c1-8)
-        local TRY_HH=$(echo $TRY_TIME | cut -c9-10)
-        local FHR=$back_hours
-        local FHR_STR=$(printf "%02d" $FHR)
-
-        local GRIB2_FILE="${COMIN}/hrrr.${TRY_DATE}/conus/hrrr.t${TRY_HH}z.wrfsfcf${FHR_STR}.grib2"
-        if [ -s "$GRIB2_FILE" ]; then
-            echo "$GRIB2_FILE"
-            return 0
-        fi
-    done
-
-    # Strategy 4: Fallback - try 6-hourly cycles (00Z, 06Z, 12Z, 18Z) with extended forecasts
-    local INIT_TIME=$($NDATE -6 $VALID_TIME)
-    local INIT_DATE=$(echo $INIT_TIME | cut -c1-8)
-    local INIT_HH_NUM=$((10#$(echo $INIT_TIME | cut -c9-10)))
-    local CYCLE_HH=$(printf "%02d" $((INIT_HH_NUM / 6 * 6)))
-    local CYCLE_TIME="${INIT_DATE}${CYCLE_HH}"
-
-    for attempt in 1 2 3 4; do
-        local FHR=$($NHOUR $VALID_TIME $CYCLE_TIME 2>/dev/null || echo "-1")
-        local CYCLE_DATE=$(echo $CYCLE_TIME | cut -c1-8)
-        local CYCLE_HH_STR=$(echo $CYCLE_TIME | cut -c9-10)
-
-        # Use 10# to force decimal interpretation (nhour can return "09" which is invalid octal)
-        local FHR_DEC=$((10#$FHR))
-        if [ "$FHR_DEC" -ge 1 ] && [ "$FHR_DEC" -le 48 ]; then
-            local FHR_STR=$(printf "%02d" $FHR_DEC)
-            local GRIB2_FILE="${COMIN}/hrrr.${CYCLE_DATE}/conus/hrrr.t${CYCLE_HH_STR}z.wrfsfcf${FHR_STR}.grib2"
-            if [ -s "$GRIB2_FILE" ]; then
-                echo "$GRIB2_FILE"
-                return 0
-            fi
-        fi
-
-        # Try previous 6-hourly cycle
-        CYCLE_TIME=$($NDATE -6 $CYCLE_TIME)
-    done
 
     echo ""
     return 1
