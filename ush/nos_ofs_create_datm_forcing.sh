@@ -369,10 +369,10 @@ fi
 echo "Created: ${OUTPUT_DIR}/${DBASE_LOWER}_forcing_raw.nc"
 
 # =============================================================================
-# Step 3: Add CF-compliance attributes
+# Step 3: Add CF-compliance and CDEPS-compatible time attributes
 # =============================================================================
 echo ""
-echo "Step 3: Adding CF-compliance attributes..."
+echo "Step 3: Adding CF-compliance and CDEPS time attributes..."
 echo "============================================"
 
 cp ${OUTPUT_DIR}/${DBASE_LOWER}_forcing_raw.nc $OUTPUT_FILE
@@ -395,6 +395,30 @@ if command -v ncatted &> /dev/null; then
     ncatted -h -a standard_name,latitude,o,c,"latitude" $OUTPUT_FILE
 
     ncatted -h -a axis,time,o,c,"T" $OUTPUT_FILE
+
+    # =========================================================================
+    # CRITICAL: CDEPS/ESMF-compatible time attributes
+    # Without these, shr_stream_findBounds will fail with:
+    #   "ERROR: limit on and rDateIn lt rDatelvd"
+    # CDEPS requires epoch-based time units and calendar attribute for proper
+    # date parsing by the ESMF time manager.
+    # =========================================================================
+    echo "Adding CDEPS-compatible time attributes..."
+
+    # Set time units to epoch format (required by CDEPS)
+    ncatted -O -a units,time,o,c,"seconds since 1970-01-01 00:00:00" $OUTPUT_FILE
+
+    # Add calendar attribute (required by CDEPS/ESMF time manager)
+    ncatted -O -a calendar,time,o,c,"standard" $OUTPUT_FILE
+
+    # Remove potentially conflicting reference time attributes that confuse CDEPS
+    # These are sometimes added by wgrib2 and can cause date misinterpretation
+    ncatted -O -a reference_time,time,d,, $OUTPUT_FILE 2>/dev/null || true
+    ncatted -O -a reference_date,time,d,, $OUTPUT_FILE 2>/dev/null || true
+    ncatted -O -a reference_time_type,time,d,, $OUTPUT_FILE 2>/dev/null || true
+    ncatted -O -a reference_time_description,time,d,, $OUTPUT_FILE 2>/dev/null || true
+
+    echo "CDEPS time attributes added successfully"
 fi
 
 echo "Created: $OUTPUT_FILE"
