@@ -62,6 +62,15 @@ if [ -z "$DBASE" ] || [ -z "$OUTPUT_DIR" ]; then
     echo ""
     echo "Environment Variables Required:"
     echo "  PDY, cyc, COMINgfs/COMINhrrr, WGRIB2, NDATE"
+    echo ""
+    echo "Logging Options (optional):"
+    echo "  VERBOSE=0  - Quiet mode (minimal output)"
+    echo "  VERBOSE=1  - Normal mode (default, shows progress)"
+    echo "  VERBOSE=2  - Debug mode (shows all file selections)"
+    echo "  LOG_FILE   - Path to save detailed log (optional)"
+    echo ""
+    echo "Example:"
+    echo "  VERBOSE=2 LOG_FILE=datm.log $0 HRRR ./output"
     echo "============================================"
     exit 1
 fi
@@ -74,6 +83,29 @@ NDATE=${NDATE:-ndate}
 NHOUR=${NHOUR:-nhour}
 PDY=${PDY:-$(date +%Y%m%d)}
 cyc=${cyc:-00}
+
+# Logging options
+VERBOSE=${VERBOSE:-1}           # 0=quiet, 1=normal, 2=verbose
+LOG_FILE=${LOG_FILE:-""}        # Optional log file path
+
+# Logging function
+log_msg() {
+    local level=$1
+    shift
+    local msg="$@"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+
+    if [ "$level" -le "$VERBOSE" ]; then
+        echo "[$timestamp] $msg"
+        if [ -n "$LOG_FILE" ]; then
+            echo "[$timestamp] $msg" >> "$LOG_FILE"
+        fi
+    fi
+}
+
+log_info() { log_msg 1 "INFO: $@"; }
+log_debug() { log_msg 2 "DEBUG: $@"; }
+log_warn() { log_msg 1 "WARN: $@"; }
 
 # Default time range if not provided
 if [ -z "$TIME_START" ]; then
@@ -191,13 +223,17 @@ find_gfs_file() {
 HRRR_BASE_CYCLE=""
 HRRR_BASE_DATE=""
 
+# Track files used for logging
+declare -a FILES_USED=()
+
 find_hrrr_base_cycle() {
     # Only find once - cache result
     if [ -n "$HRRR_BASE_CYCLE" ] && [ -n "$HRRR_BASE_DATE" ]; then
         return 0
     fi
 
-    echo "  Finding HRRR base cycle with f48 available..."
+    log_info "Finding HRRR base cycle with f48 available..."
+    log_debug "Search starting from TIME_START=$TIME_START"
 
     # Start from TIME_START and search backward for cycles with f48
     local SEARCH_TIME=$TIME_START
@@ -206,6 +242,7 @@ find_hrrr_base_cycle() {
     # Search up to 48 hours back
     for back_days in 0 1 2; do
         local CHECK_DATE=$($NDATE -$((back_days * 24)) ${SEARCH_DATE}00 | cut -c1-8)
+        log_debug "Checking date: $CHECK_DATE"
 
         # Check each hourly cycle (23 down to 00)
         for cycle_hr in 23 22 21 20 19 18 17 16 15 14 13 12 11 10 09 08 07 06 05 04 03 02 01 00; do
@@ -215,13 +252,14 @@ find_hrrr_base_cycle() {
             if [ -s "$TEST_FILE" ] || [ -s "${TEST_FILE}.idx" ]; then
                 HRRR_BASE_DATE=$CHECK_DATE
                 HRRR_BASE_CYCLE=$CYCLE_STR
-                echo "  Found HRRR base cycle: ${HRRR_BASE_DATE} ${HRRR_BASE_CYCLE}z (has f48)"
+                log_info "==> HRRR BASE CYCLE: ${HRRR_BASE_DATE} ${HRRR_BASE_CYCLE}z (has f48)"
+                log_info "    All HRRR files will use: hrrr.t${HRRR_BASE_CYCLE}z.wrfsfcf{01-48}.grib2"
                 return 0
             fi
         done
     done
 
-    echo "WARNING: No HRRR cycle with f48 found, falling back to latest available"
+    log_warn "No HRRR cycle with f48 found, falling back to hourly cycles"
     return 1
 }
 
@@ -236,6 +274,7 @@ find_hrrr_file() {
     find_hrrr_base_cycle
 
     if [ -z "$HRRR_BASE_CYCLE" ] || [ -z "$HRRR_BASE_DATE" ]; then
+        log_warn "No base cycle available for $VALID_TIME"
         echo ""
         return 1
     fi
@@ -252,6 +291,8 @@ find_hrrr_file() {
         local GRIB2_FILE="${COMIN}/hrrr.${HRRR_BASE_DATE}/conus/hrrr.t${HRRR_BASE_CYCLE}z.wrfsfcf${FHR_STR}.grib2"
 
         if [ -s "$GRIB2_FILE" ]; then
+            log_debug "$VALID_TIME -> ${HRRR_BASE_CYCLE}z+f${FHR_STR} : $(basename $GRIB2_FILE)"
+            FILES_USED+=("$VALID_TIME|${HRRR_BASE_CYCLE}z|f${FHR_STR}|$(basename $GRIB2_FILE)")
             echo "$GRIB2_FILE"
             return 0
         fi
@@ -259,19 +300,53 @@ find_hrrr_file() {
 
     # Fallback: try hourly cycle with f01 if forecast hour out of range
     if [ "$FHR_DEC" -lt 1 ] || [ "$FHR_DEC" -gt 48 ]; then
+        log_debug "$VALID_TIME -> FHR=$FHR_DEC out of range [1-48], trying hourly fallback"
         local PREV_HOUR_TIME=$($NDATE -1 $VALID_TIME)
         local PREV_DATE=$(echo $PREV_HOUR_TIME | cut -c1-8)
         local PREV_HH=$(echo $PREV_HOUR_TIME | cut -c9-10)
 
         local GRIB2_FILE="${COMIN}/hrrr.${PREV_DATE}/conus/hrrr.t${PREV_HH}z.wrfsfcf01.grib2"
         if [ -s "$GRIB2_FILE" ]; then
+            log_debug "$VALID_TIME -> FALLBACK ${PREV_HH}z+f01 : $(basename $GRIB2_FILE)"
+            FILES_USED+=("$VALID_TIME|${PREV_HH}z|f01|$(basename $GRIB2_FILE)|FALLBACK")
             echo "$GRIB2_FILE"
             return 0
         fi
     fi
 
+    log_warn "$VALID_TIME -> No HRRR file found!"
     echo ""
     return 1
+}
+
+# =============================================================================
+# Function: Print summary of files used
+# =============================================================================
+print_files_summary() {
+    log_info ""
+    log_info "============================================"
+    log_info "SUMMARY: GRIB2 FILES USED"
+    log_info "============================================"
+    log_info "Base Cycle: ${HRRR_BASE_DATE} ${HRRR_BASE_CYCLE}z"
+    log_info ""
+    log_info "Valid Time       | Cycle | FHR  | File"
+    log_info "-----------------|-------|------|----------------------------------"
+
+    for entry in "${FILES_USED[@]}"; do
+        local vtime=$(echo $entry | cut -d'|' -f1)
+        local cycle=$(echo $entry | cut -d'|' -f2)
+        local fhr=$(echo $entry | cut -d'|' -f3)
+        local fname=$(echo $entry | cut -d'|' -f4)
+        local note=$(echo $entry | cut -d'|' -f5)
+        if [ -n "$note" ]; then
+            log_info "$vtime | $cycle  | $fhr  | $fname ($note)"
+        else
+            log_info "$vtime | $cycle  | $fhr  | $fname"
+        fi
+    done
+    log_info "============================================"
+    log_info "Total files: ${#FILES_USED[@]}"
+    log_info ""
 }
 
 # =============================================================================
@@ -451,6 +526,11 @@ echo "Cleaning up temporary files..."
 rm -rf $TEMP_DIR
 rm -f ${OUTPUT_DIR}/${DBASE_LOWER}_forcing_raw.nc
 
+# Print summary of files used (if HRRR and verbose mode)
+if [ "$DBASE_UPPER" == "HRRR" ] && [ "$VERBOSE" -ge 1 ]; then
+    print_files_summary
+fi
+
 echo ""
 echo "============================================"
 echo "DATM Forcing Generation COMPLETED"
@@ -458,6 +538,18 @@ echo "============================================"
 echo "Output: $OUTPUT_FILE"
 echo "Time range: $TIME_START to $TIME_END"
 echo "Time steps: $TIME_STEPS"
+if [ "$DBASE_UPPER" == "HRRR" ] && [ -n "$HRRR_BASE_CYCLE" ]; then
+    echo "HRRR Base: ${HRRR_BASE_DATE} ${HRRR_BASE_CYCLE}z"
+fi
 echo "============================================"
+
+# Save file list to log if LOG_FILE specified
+if [ -n "$LOG_FILE" ] && [ "$DBASE_UPPER" == "HRRR" ]; then
+    echo "" >> "$LOG_FILE"
+    echo "FILES_USED:" >> "$LOG_FILE"
+    for entry in "${FILES_USED[@]}"; do
+        echo "  $entry" >> "$LOG_FILE"
+    done
+fi
 
 exit 0
