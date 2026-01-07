@@ -322,6 +322,13 @@ EOF
         local NSELECTED=$(grep -c "^/" "$MET_FILE" 2>/dev/null || echo "0")
         log_info "  Selected $NSELECTED files for processing"
 
+        # Copy file search artifacts to output directory for debugging
+        cp -p tmp.out ${OUTPUT_DIR}/hrrr_files_available.txt 2>/dev/null
+        cp -p Fortran_file_search.ctl ${OUTPUT_DIR}/hrrr_file_search.ctl 2>/dev/null
+        cp -p Fortran_file_search.log ${OUTPUT_DIR}/hrrr_file_search.log 2>/dev/null
+        cp -p $MET_FILE ${OUTPUT_DIR}/hrrr_files_selected.dat 2>/dev/null
+        log_info "  File search logs copied to ${OUTPUT_DIR}/"
+
         # Log the selected files
         if [ "$VERBOSE" -ge 2 ]; then
             log_debug "  Selected files:"
