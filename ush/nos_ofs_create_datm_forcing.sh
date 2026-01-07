@@ -215,106 +215,209 @@ find_gfs_file() {
 }
 
 # =============================================================================
-# Function: Find HRRR base cycle (matches SFLUX logic)
-# Strategy: Find the latest hourly cycle that has f48 available
-#           Use this SINGLE cycle for ALL valid times with extended forecasts
-# This ensures DATM and SFLUX use identical HRRR data sources
+# Function: Find HRRR files using Fortran executable (matches SFLUX exactly)
+# Uses nos_ofs_met_file_search for operational consistency
 # =============================================================================
-HRRR_BASE_CYCLE=""
-HRRR_BASE_DATE=""
 
 # Track files used for logging
 declare -a FILES_USED=()
+HRRR_FILE_LIST=""
 
-find_hrrr_base_cycle() {
-    # Only find once - cache result
-    if [ -n "$HRRR_BASE_CYCLE" ] && [ -n "$HRRR_BASE_DATE" ]; then
-        return 0
-    fi
+# Fortran executable path
+MET_FILE_SEARCH=${EXECnos:-/lfs/h1/ops/prod/packages/nosofs.v3.7.0/exec}/nos_ofs_met_file_search
 
-    log_info "Finding HRRR base cycle with f48 available..."
-    log_debug "Search starting from TIME_START=$TIME_START"
+find_hrrr_files_fortran() {
+    log_info "Using Fortran file search (nos_ofs_met_file_search) for HRRR..."
+    log_info "  TIME_START: $TIME_START"
+    log_info "  TIME_END: $TIME_END"
 
-    # Start from TIME_START and search backward for cycles with f48
-    local SEARCH_TIME=$TIME_START
-    local SEARCH_DATE=$(echo $SEARCH_TIME | cut -c1-8)
+    # Create working directory for file search
+    local SEARCH_DIR="${TEMP_DIR}/file_search"
+    mkdir -p $SEARCH_DIR
+    cd $SEARCH_DIR
 
-    # Search up to 48 hours back
-    for back_days in 0 1 2; do
-        local CHECK_DATE=$($NDATE -$((back_days * 24)) ${SEARCH_DATE}00 | cut -c1-8)
-        log_debug "Checking date: $CHECK_DATE"
+    # Step 1: Collect all available HRRR files into tmp.out (same as SFLUX)
+    log_info "  Collecting available HRRR files..."
+    rm -f tmp.out
 
-        # Check each hourly cycle (23 down to 00)
-        for cycle_hr in 23 22 21 20 19 18 17 16 15 14 13 12 11 10 09 08 07 06 05 04 03 02 01 00; do
+    # Get date range to search
+    local START_DATE=$(echo $TIME_START | cut -c1-8)
+    local END_DATE=$(echo $TIME_END | cut -c1-8)
+    local CURRENTTIME=$TIME_START
+
+    # Search from 2 days before start to end date
+    local SEARCH_START=$($NDATE -48 $TIME_START)
+    local SEARCH_DATE=$(echo $SEARCH_START | cut -c1-8)
+
+    while [ "$SEARCH_DATE" -le "$END_DATE" ]; do
+        # Check each hourly cycle (00-23)
+        for cycle_hr in $(seq -w 0 23); do
             local CYCLE_STR=$(printf "%02d" $((10#$cycle_hr)))
-            local TEST_FILE="${COMIN}/hrrr.${CHECK_DATE}/conus/hrrr.t${CYCLE_STR}z.wrfsfcf48.grib2"
 
-            if [ -s "$TEST_FILE" ] || [ -s "${TEST_FILE}.idx" ]; then
-                HRRR_BASE_DATE=$CHECK_DATE
-                HRRR_BASE_CYCLE=$CYCLE_STR
-                log_info "==> HRRR BASE CYCLE: ${HRRR_BASE_DATE} ${HRRR_BASE_CYCLE}z (has f48)"
-                log_info "    All HRRR files will use: hrrr.t${HRRR_BASE_CYCLE}z.wrfsfcf{01-48}.grib2"
-                return 0
+            # Check if cycle has f48 available (required for forecast coverage)
+            local TEST_F48="${COMIN}/hrrr.${SEARCH_DATE}/conus/hrrr.t${CYCLE_STR}z.wrfsfcf48.grib2"
+            if [ -s "$TEST_F48" ] || [ -s "${TEST_F48}.idx" ]; then
+                # Add all forecast hours (f01-f48) for this cycle
+                for fhr in $(seq -w 1 48); do
+                    local HRRR_FILE="${COMIN}/hrrr.${SEARCH_DATE}/conus/hrrr.t${CYCLE_STR}z.wrfsfcf${fhr}.grib2"
+                    if [ -s "$HRRR_FILE" ] || [ -s "${HRRR_FILE}.idx" ]; then
+                        echo "$HRRR_FILE" >> tmp.out
+                    fi
+                done
+                log_debug "  Found cycle: ${SEARCH_DATE} ${CYCLE_STR}z with f48"
             fi
         done
+
+        # Next day
+        SEARCH_DATE=$($NDATE 24 ${SEARCH_DATE}00 | cut -c1-8)
     done
 
-    log_warn "No HRRR cycle with f48 found, falling back to hourly cycles"
-    return 1
+    if [ ! -s tmp.out ]; then
+        log_warn "No HRRR files found!"
+        return 1
+    fi
+
+    local NFILES=$(wc -l < tmp.out)
+    log_info "  Found $NFILES HRRR files"
+
+    # Step 2: Create control file for Fortran executable
+    # Format: TIME_START, nowcastend, TIME_END, input_file, output_file
+    local NOWCASTEND=${time_nowcastend:-$TIME_START}
+    local MET_FILE="HRRR_FILE_DATM.dat"
+
+    cat > Fortran_file_search.ctl << EOF
+$TIME_START
+$NOWCASTEND
+$TIME_END
+tmp.out
+$MET_FILE
+EOF
+
+    log_debug "  Control file:"
+    log_debug "    TIME_START: $TIME_START"
+    log_debug "    NOWCASTEND: $NOWCASTEND"
+    log_debug "    TIME_END: $TIME_END"
+
+    # Step 3: Run Fortran file search executable
+    if [ ! -x "$MET_FILE_SEARCH" ]; then
+        log_warn "Fortran executable not found: $MET_FILE_SEARCH"
+        log_warn "Falling back to bash file selection"
+        cd - > /dev/null
+        return 1
+    fi
+
+    log_info "  Running nos_ofs_met_file_search..."
+    $MET_FILE_SEARCH < Fortran_file_search.ctl > Fortran_file_search.log 2>&1
+    local RC=$?
+
+    if grep -q "COMPLETED SUCCESSFULLY" Fortran_file_search.log; then
+        log_info "  File search COMPLETED SUCCESSFULLY"
+    else
+        log_warn "  File search may have issues - check Fortran_file_search.log"
+    fi
+
+    # Step 4: Read selected files
+    if [ -s "$MET_FILE" ]; then
+        HRRR_FILE_LIST="$SEARCH_DIR/$MET_FILE"
+        local NSELECTED=$(grep -c "^/" "$MET_FILE" 2>/dev/null || echo "0")
+        log_info "  Selected $NSELECTED files for processing"
+
+        # Log the selected files
+        if [ "$VERBOSE" -ge 2 ]; then
+            log_debug "  Selected files:"
+            while IFS= read -r line; do
+                if [[ "$line" == /* ]]; then
+                    log_debug "    $line"
+                fi
+            done < "$MET_FILE"
+        fi
+    else
+        log_warn "  No output file generated"
+        cd - > /dev/null
+        return 1
+    fi
+
+    cd - > /dev/null
+    return 0
 }
 
 # =============================================================================
-# Function: Find HRRR file for a valid time (SFLUX-matching logic)
-# Uses single base cycle with extended forecast hours (f01-f48)
+# Function: Get HRRR file for a valid time from Fortran-selected list
 # =============================================================================
-find_hrrr_file() {
+get_hrrr_file_from_list() {
     local VALID_TIME=$1
 
-    # Ensure we have the base cycle
-    find_hrrr_base_cycle
-
-    if [ -z "$HRRR_BASE_CYCLE" ] || [ -z "$HRRR_BASE_DATE" ]; then
-        log_warn "No base cycle available for $VALID_TIME"
+    if [ -z "$HRRR_FILE_LIST" ] || [ ! -s "$HRRR_FILE_LIST" ]; then
         echo ""
         return 1
     fi
 
-    # Calculate forecast hour from base cycle to valid time
-    local BASE_TIME="${HRRR_BASE_DATE}${HRRR_BASE_CYCLE}"
-    local FHR=$($NHOUR $VALID_TIME $BASE_TIME 2>/dev/null || echo "-1")
+    # Parse the Fortran output file
+    # Format: filepath followed by date line (YYYY MM DD CYC FHR)
+    local VALID_DATE=$(echo $VALID_TIME | cut -c1-8)
+    local VALID_HH=$(echo $VALID_TIME | cut -c9-10)
 
-    # Handle decimal interpretation
-    local FHR_DEC=$((10#$FHR))
+    local FOUND_FILE=""
+    local PREV_LINE=""
 
-    if [ "$FHR_DEC" -ge 1 ] && [ "$FHR_DEC" -le 48 ]; then
-        local FHR_STR=$(printf "%02d" $FHR_DEC)
-        local GRIB2_FILE="${COMIN}/hrrr.${HRRR_BASE_DATE}/conus/hrrr.t${HRRR_BASE_CYCLE}z.wrfsfcf${FHR_STR}.grib2"
+    while IFS= read -r line; do
+        if [[ "$line" == /* ]]; then
+            PREV_LINE="$line"
+        else
+            # Parse date line: YYYY MM DD CYC FHR
+            local FILE_YEAR=$(echo $line | awk '{print $1}')
+            local FILE_MON=$(echo $line | awk '{print $2}')
+            local FILE_DAY=$(echo $line | awk '{print $3}')
+            local FILE_CYC=$(echo $line | awk '{print $4}')
+            local FILE_FHR=$(echo $line | awk '{print $5}')
 
-        if [ -s "$GRIB2_FILE" ]; then
-            log_debug "$VALID_TIME -> ${HRRR_BASE_CYCLE}z+f${FHR_STR} : $(basename $GRIB2_FILE)"
-            FILES_USED+=("$VALID_TIME|${HRRR_BASE_CYCLE}z|f${FHR_STR}|$(basename $GRIB2_FILE)")
-            echo "$GRIB2_FILE"
-            return 0
+            # Calculate valid time for this file
+            local FILE_DATE="${FILE_YEAR}$(printf '%02d' $FILE_MON)$(printf '%02d' $FILE_DAY)"
+            local FILE_VALID_HH=$((10#$FILE_CYC + 10#$FILE_FHR))
+
+            # Handle day rollover
+            while [ $FILE_VALID_HH -ge 24 ]; do
+                FILE_VALID_HH=$((FILE_VALID_HH - 24))
+                FILE_DATE=$($NDATE 24 ${FILE_DATE}00 | cut -c1-8)
+            done
+
+            local FILE_VALID_TIME="${FILE_DATE}$(printf '%02d' $FILE_VALID_HH)"
+
+            if [ "$FILE_VALID_TIME" == "$VALID_TIME" ]; then
+                FOUND_FILE="$PREV_LINE"
+                FILES_USED+=("$VALID_TIME|${FILE_CYC}z|f$(printf '%02d' $FILE_FHR)|$(basename $PREV_LINE)")
+                break
+            fi
         fi
+    done < "$HRRR_FILE_LIST"
+
+    echo "$FOUND_FILE"
+}
+
+# =============================================================================
+# Function: Find HRRR file (wrapper - tries Fortran first, then bash fallback)
+# =============================================================================
+HRRR_FORTRAN_INITIALIZED=0
+
+find_hrrr_file() {
+    local VALID_TIME=$1
+
+    # Initialize Fortran file list on first call
+    if [ "$HRRR_FORTRAN_INITIALIZED" -eq 0 ]; then
+        find_hrrr_files_fortran
+        HRRR_FORTRAN_INITIALIZED=1
     fi
 
-    # Fallback: try hourly cycle with f01 if forecast hour out of range
-    if [ "$FHR_DEC" -lt 1 ] || [ "$FHR_DEC" -gt 48 ]; then
-        log_debug "$VALID_TIME -> FHR=$FHR_DEC out of range [1-48], trying hourly fallback"
-        local PREV_HOUR_TIME=$($NDATE -1 $VALID_TIME)
-        local PREV_DATE=$(echo $PREV_HOUR_TIME | cut -c1-8)
-        local PREV_HH=$(echo $PREV_HOUR_TIME | cut -c9-10)
+    # Try to get file from Fortran-selected list
+    local GRIB2_FILE=$(get_hrrr_file_from_list $VALID_TIME)
 
-        local GRIB2_FILE="${COMIN}/hrrr.${PREV_DATE}/conus/hrrr.t${PREV_HH}z.wrfsfcf01.grib2"
-        if [ -s "$GRIB2_FILE" ]; then
-            log_debug "$VALID_TIME -> FALLBACK ${PREV_HH}z+f01 : $(basename $GRIB2_FILE)"
-            FILES_USED+=("$VALID_TIME|${PREV_HH}z|f01|$(basename $GRIB2_FILE)|FALLBACK")
-            echo "$GRIB2_FILE"
-            return 0
-        fi
+    if [ -n "$GRIB2_FILE" ] && [ -s "$GRIB2_FILE" ]; then
+        log_debug "$VALID_TIME -> $(basename $GRIB2_FILE)"
+        echo "$GRIB2_FILE"
+        return 0
     fi
 
-    log_warn "$VALID_TIME -> No HRRR file found!"
+    log_warn "$VALID_TIME -> No HRRR file found in Fortran selection"
     echo ""
     return 1
 }
@@ -325,9 +428,8 @@ find_hrrr_file() {
 print_files_summary() {
     log_info ""
     log_info "============================================"
-    log_info "SUMMARY: GRIB2 FILES USED"
+    log_info "SUMMARY: GRIB2 FILES USED (Fortran selection)"
     log_info "============================================"
-    log_info "Base Cycle: ${HRRR_BASE_DATE} ${HRRR_BASE_CYCLE}z"
     log_info ""
     log_info "Valid Time       | Cycle | FHR  | File"
     log_info "-----------------|-------|------|----------------------------------"
@@ -337,12 +439,7 @@ print_files_summary() {
         local cycle=$(echo $entry | cut -d'|' -f2)
         local fhr=$(echo $entry | cut -d'|' -f3)
         local fname=$(echo $entry | cut -d'|' -f4)
-        local note=$(echo $entry | cut -d'|' -f5)
-        if [ -n "$note" ]; then
-            log_info "$vtime | $cycle  | $fhr  | $fname ($note)"
-        else
-            log_info "$vtime | $cycle  | $fhr  | $fname"
-        fi
+        log_info "$vtime | $cycle  | $fhr  | $fname"
     done
     log_info "============================================"
     log_info "Total files: ${#FILES_USED[@]}"
@@ -538,8 +635,8 @@ echo "============================================"
 echo "Output: $OUTPUT_FILE"
 echo "Time range: $TIME_START to $TIME_END"
 echo "Time steps: $TIME_STEPS"
-if [ "$DBASE_UPPER" == "HRRR" ] && [ -n "$HRRR_BASE_CYCLE" ]; then
-    echo "HRRR Base: ${HRRR_BASE_DATE} ${HRRR_BASE_CYCLE}z"
+if [ "$DBASE_UPPER" == "HRRR" ]; then
+    echo "File selection: nos_ofs_met_file_search (Fortran)"
 fi
 echo "============================================"
 
