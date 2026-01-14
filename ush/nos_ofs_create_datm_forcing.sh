@@ -282,7 +282,6 @@ find_hrrr_files_fortran() {
     local MET_FILE="HRRR_FILE_DATM.dat"
 
     cat > Fortran_file_search.ctl << EOF
-HRRR
 $TIME_START
 $NOWCASTEND
 $TIME_END
