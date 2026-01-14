@@ -104,7 +104,7 @@ fi
 OUTPUT_DIR=$(dirname $OUTPUT_FILE)
 mkdir -p $OUTPUT_DIR
 
-python3 << PYEOF
+python << PYEOF
 #!/usr/bin/env python3
 """
 Blend HRRR and GFS forcing files for CDEPS/DATM.
@@ -377,7 +377,7 @@ if [ ! -s "$SCRIP_SCRIPT" ]; then
 fi
 
 if [ -s "$SCRIP_SCRIPT" ]; then
-    python3 $SCRIP_SCRIPT --ifile $OUTPUT_FILE --ofile $(basename $SCRIP_FILE) --odir $OUTPUT_DIR
+    python $SCRIP_SCRIPT --ifile $OUTPUT_FILE --ofile $(basename $SCRIP_FILE) --odir $OUTPUT_DIR
     SCRIP_STATUS=$?
 else
     echo "WARNING: proc_scrip.py not found at $SCRIP_SCRIPT"
@@ -390,7 +390,7 @@ if [ -s "$SCRIP_FILE" ]; then
 else
     echo "WARNING: SCRIP generation failed"
     echo "You can generate it manually with:"
-    echo "  python3 proc_scrip.py --ifile $OUTPUT_FILE --ofile ${BASENAME}_scrip.nc"
+    echo "  python proc_scrip.py --ifile $OUTPUT_FILE --ofile ${BASENAME}_scrip.nc"
 fi
 
 # =============================================================================
