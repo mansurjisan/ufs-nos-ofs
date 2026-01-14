@@ -101,6 +101,7 @@ python3 << PYEOF
 #!/usr/bin/env python3
 """
 Blend HRRR and GFS forcing files for CDEPS/DATM.
+Memory-optimized version for WCOSS2.
 """
 
 import numpy as np
@@ -109,6 +110,7 @@ from scipy.spatial import cKDTree
 from scipy.interpolate import RegularGridInterpolator, interp1d
 from datetime import datetime
 import sys
+import gc
 
 # Configuration from shell
 HRRR_FILE = "${HRRR_FILE}"
@@ -119,19 +121,51 @@ TARGET_LAT_MIN, TARGET_LAT_MAX = ${LAT_MIN}, ${LAT_MAX}
 TARGET_DLON = ${RESOLUTION}
 TARGET_DLAT = ${RESOLUTION}
 
-print("Loading HRRR...")
+# Buffer for subsetting (degrees)
+BUFFER = 1.0
+
+print("Loading HRRR coordinates...")
 hrrr = Dataset(HRRR_FILE, 'r')
-hrrr_lon2d = np.array(hrrr.variables['longitude'][:])
-hrrr_lat2d = np.array(hrrr.variables['latitude'][:])
-hrrr_lon2d = np.where(hrrr_lon2d > 180, hrrr_lon2d - 360, hrrr_lon2d)
+hrrr_lon2d_full = hrrr.variables['longitude'][:]
+hrrr_lat2d_full = hrrr.variables['latitude'][:]
+hrrr_lon2d_full = np.where(hrrr_lon2d_full > 180, hrrr_lon2d_full - 360, hrrr_lon2d_full)
 hrrr_time = np.array(hrrr.variables['time'][:])
 n_times = len(hrrr_time)
-print(f"  HRRR: {hrrr_lon2d.shape}, {n_times} times")
+print(f"  HRRR full grid: {hrrr_lon2d_full.shape}, {n_times} times")
+
+# Subset HRRR to target domain + buffer (memory optimization)
+print("Subsetting HRRR to target domain...")
+hrrr_mask = ((hrrr_lon2d_full >= TARGET_LON_MIN - BUFFER) &
+             (hrrr_lon2d_full <= TARGET_LON_MAX + BUFFER) &
+             (hrrr_lat2d_full >= TARGET_LAT_MIN - BUFFER) &
+             (hrrr_lat2d_full <= TARGET_LAT_MAX + BUFFER))
+
+# Find bounding box indices for HRRR subset
+rows_with_data = np.any(hrrr_mask, axis=1)
+cols_with_data = np.any(hrrr_mask, axis=0)
+if np.any(rows_with_data) and np.any(cols_with_data):
+    row_min, row_max = np.where(rows_with_data)[0][[0, -1]]
+    col_min, col_max = np.where(cols_with_data)[0][[0, -1]]
+    hrrr_row_slice = slice(row_min, row_max + 1)
+    hrrr_col_slice = slice(col_min, col_max + 1)
+    hrrr_lon2d = np.array(hrrr_lon2d_full[hrrr_row_slice, hrrr_col_slice], dtype=np.float32)
+    hrrr_lat2d = np.array(hrrr_lat2d_full[hrrr_row_slice, hrrr_col_slice], dtype=np.float32)
+    print(f"  HRRR subset: {hrrr_lon2d.shape} (reduced from {hrrr_lon2d_full.shape})")
+else:
+    print("  WARNING: No HRRR data in target domain, using GFS only")
+    hrrr_lon2d = np.array([[TARGET_LON_MIN]])
+    hrrr_lat2d = np.array([[0.0]])  # Outside domain
+    hrrr_row_slice = slice(0, 1)
+    hrrr_col_slice = slice(0, 1)
+
+# Free full arrays
+del hrrr_lon2d_full, hrrr_lat2d_full, hrrr_mask
+gc.collect()
 
 print("Loading GFS...")
 gfs = Dataset(GFS_FILE, 'r')
-gfs_lat_full = np.array(gfs.variables['latitude'][:])
-gfs_lon_full = np.array(gfs.variables['longitude'][:])
+gfs_lat_full = np.array(gfs.variables['latitude'][:], dtype=np.float32)
+gfs_lon_full = np.array(gfs.variables['longitude'][:], dtype=np.float32)
 gfs_time = np.array(gfs.variables['time'][:])
 gfs_lon_180 = np.where(gfs_lon_full > 180, gfs_lon_full - 360, gfs_lon_full)
 
@@ -145,13 +179,13 @@ gfs_lon = gfs_lon_180[lon_mask]
 print(f"  GFS subset: {len(gfs_lat)} x {len(gfs_lon)}")
 
 print("Creating target grid...")
-target_lon = np.arange(TARGET_LON_MIN, TARGET_LON_MAX + TARGET_DLON/2, TARGET_DLON)
-target_lat = np.arange(TARGET_LAT_MIN, TARGET_LAT_MAX + TARGET_DLAT/2, TARGET_DLAT)
+target_lon = np.arange(TARGET_LON_MIN, TARGET_LON_MAX + TARGET_DLON/2, TARGET_DLON, dtype=np.float32)
+target_lat = np.arange(TARGET_LAT_MIN, TARGET_LAT_MAX + TARGET_DLAT/2, TARGET_DLAT, dtype=np.float32)
 target_lon2d, target_lat2d = np.meshgrid(target_lon, target_lat)
 ny, nx = len(target_lat), len(target_lon)
 print(f"  Grid: {ny} x {nx} = {ny*nx:,} points")
 
-print("Building HRRR spatial index...")
+print("Building HRRR spatial index (subset only)...")
 hrrr_points = np.column_stack([hrrr_lon2d.ravel(), hrrr_lat2d.ravel()])
 hrrr_tree = cKDTree(hrrr_points)
 target_points_flat = np.column_stack([target_lon2d.ravel(), target_lat2d.ravel()])
@@ -160,8 +194,14 @@ hrrr_indices = hrrr_indices.reshape(ny, nx)
 distances = distances.reshape(ny, nx)
 
 # HRRR valid mask: use HRRR where distance < 0.1 deg and within lat range
-hrrr_valid_mask = (distances < 0.1) & (target_lat2d >= hrrr_lat2d.min()) & (target_lat2d <= hrrr_lat2d.max())
+hrrr_lat_min = float(hrrr_lat2d.min())
+hrrr_lat_max = float(hrrr_lat2d.max())
+hrrr_valid_mask = (distances < 0.1) & (target_lat2d >= hrrr_lat_min) & (target_lat2d <= hrrr_lat_max)
 print(f"  HRRR coverage: {100*np.sum(hrrr_valid_mask)/hrrr_valid_mask.size:.1f}%")
+
+# Free memory
+del hrrr_points, target_points_flat, distances
+gc.collect()
 
 print("Setting up GFS temporal interpolation...")
 gfs_time_interp = interp1d(gfs_time, np.arange(len(gfs_time)),
@@ -246,8 +286,8 @@ for hrrr_name, gfs_name in VARIABLES:
     out_var.long_name = hrrr_var.long_name if hasattr(hrrr_var, 'long_name') else hrrr_name
 
     for t in range(n_times):
-        # HRRR data
-        hrrr_data = np.array(hrrr_var[t, :, :]).ravel()
+        # HRRR data - read only the subset
+        hrrr_data = np.array(hrrr_var[t, hrrr_row_slice, hrrr_col_slice], dtype=np.float32).ravel()
         hrrr_data = np.where(hrrr_data > 1e10, np.nan, hrrr_data)
         hrrr_regrid = hrrr_data[hrrr_indices]
 
@@ -259,13 +299,13 @@ for hrrr_name, gfs_name in VARIABLES:
         t_low = max(0, min(t_low, len(gfs_time) - 1))
         t_high = max(0, min(t_high, len(gfs_time) - 1))
 
-        gfs_data_low = gfs_var[t_low, gfs_lat_idx[0]:gfs_lat_idx[-1]+1, gfs_lon_idx[0]:gfs_lon_idx[-1]+1]
-        gfs_data_high = gfs_var[t_high, gfs_lat_idx[0]:gfs_lat_idx[-1]+1, gfs_lon_idx[0]:gfs_lon_idx[-1]+1]
+        gfs_data_low = np.array(gfs_var[t_low, gfs_lat_idx[0]:gfs_lat_idx[-1]+1, gfs_lon_idx[0]:gfs_lon_idx[-1]+1], dtype=np.float32)
+        gfs_data_high = np.array(gfs_var[t_high, gfs_lat_idx[0]:gfs_lat_idx[-1]+1, gfs_lon_idx[0]:gfs_lon_idx[-1]+1], dtype=np.float32)
 
         if t_low == t_high:
-            gfs_data = np.array(gfs_data_low)
+            gfs_data = gfs_data_low
         else:
-            gfs_data = (1 - t_frac) * np.array(gfs_data_low) + t_frac * np.array(gfs_data_high)
+            gfs_data = (1 - t_frac) * gfs_data_low + t_frac * gfs_data_high
 
         if gfs_flip:
             gfs_data = gfs_data[::-1, :]
@@ -281,6 +321,10 @@ for hrrr_name, gfs_name in VARIABLES:
         combined = np.where(hrrr_valid_mask & ~np.isnan(hrrr_regrid), hrrr_regrid, gfs_regrid)
         out_var[t, :, :] = combined
 
+        # Free memory each timestep
+        del hrrr_data, hrrr_regrid, gfs_data_low, gfs_data_high, gfs_data, gfs_regrid, combined
+
+    gc.collect()
     print(" done")
 
 ncout.close()
