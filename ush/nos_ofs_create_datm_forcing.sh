@@ -224,101 +224,139 @@ HRRR_FILE_LIST=""
 MET_FILE_SEARCH=${EXECnos:-/lfs/h1/ops/prod/packages/nosofs.v3.7.0/exec}/nos_ofs_met_file_search
 
 find_hrrr_files_fortran() {
+    # ==========================================================================
+    # Match SFLUX file selection exactly by running Fortran TWICE:
+    # 1. Nowcast period: TIME_START to NOWCASTEND (uses f01 from hourly cycles)
+    # 2. Forecast period: NOWCASTEND to TIME_END (uses extended forecasts)
+    # This ensures DATM uses identical files as SFLUX for valid comparison.
+    # ==========================================================================
+
     log_info "Using Fortran file search (nos_ofs_met_file_search) for HRRR..."
-    log_info "  TIME_START: $TIME_START"
-    log_info "  TIME_END: $TIME_END"
+    log_info "  Matching SFLUX file selection (separate nowcast/forecast)"
 
     # Create working directory for file search
     local SEARCH_DIR="${TEMP_DIR}/file_search"
     mkdir -p $SEARCH_DIR
     cd $SEARCH_DIR
 
-    # Step 1: Collect all available HRRR files into tmp.out (same as SFLUX)
+    # Determine nowcast end time
+    local NOWCASTEND=${time_nowcastend:-${PDY}${cyc}}
+    log_info "  TIME_START:  $TIME_START"
+    log_info "  NOWCASTEND:  $NOWCASTEND"
+    log_info "  TIME_END:    $TIME_END"
+
+    # Step 1: Collect all available HRRR files into tmp.out
     log_info "  Collecting available HRRR files..."
     rm -f tmp.out
 
-    # Get date range to search
     local START_DATE=$(echo $TIME_START | cut -c1-8)
     local END_DATE=$(echo $TIME_END | cut -c1-8)
-    local CURRENTTIME=$TIME_START
 
     # Search from 2 days before start to end date
     local SEARCH_START=$($NDATE -48 $TIME_START)
     local SEARCH_DATE=$(echo $SEARCH_START | cut -c1-8)
 
     while [ "$SEARCH_DATE" -le "$END_DATE" ]; do
-        # Check each hourly cycle (00-23)
         for cycle_hr in $(seq -w 0 23); do
             local CYCLE_STR=$(printf "%02d" $((10#$cycle_hr)))
 
-            # Check if cycle has f48 available (required for forecast coverage)
-            local TEST_F48="${COMIN}/hrrr.${SEARCH_DATE}/conus/hrrr.t${CYCLE_STR}z.wrfsfcf48.grib2"
-            if [ -s "$TEST_F48" ] || [ -s "${TEST_F48}.idx" ]; then
-                # Add all forecast hours (f01-f48) for this cycle
-                for fhr in $(seq -w 1 48); do
-                    local HRRR_FILE="${COMIN}/hrrr.${SEARCH_DATE}/conus/hrrr.t${CYCLE_STR}z.wrfsfcf${fhr}.grib2"
-                    if [ -s "$HRRR_FILE" ] || [ -s "${HRRR_FILE}.idx" ]; then
-                        echo "$HRRR_FILE" >> tmp.out
-                    fi
-                done
-                log_debug "  Found cycle: ${SEARCH_DATE} ${CYCLE_STR}z with f48"
-            fi
+            # Add all available forecast hours for this cycle
+            for fhr in $(seq -w 1 48); do
+                local HRRR_FILE="${COMIN}/hrrr.${SEARCH_DATE}/conus/hrrr.t${CYCLE_STR}z.wrfsfcf${fhr}.grib2"
+                if [ -s "$HRRR_FILE" ] || [ -s "${HRRR_FILE}.idx" ]; then
+                    echo "$HRRR_FILE" >> tmp.out
+                fi
+            done
         done
-
-        # Next day
         SEARCH_DATE=$($NDATE 24 ${SEARCH_DATE}00 | cut -c1-8)
     done
 
     if [ ! -s tmp.out ]; then
         log_warn "No HRRR files found!"
-        return 1
-    fi
-
-    local NFILES=$(wc -l < tmp.out)
-    log_info "  Found $NFILES HRRR files"
-
-    # Step 2: Create control file for Fortran executable
-    local NOWCASTEND=${time_nowcastend:-$TIME_START}
-    local MET_FILE="HRRR_FILE_DATM.dat"
-
-    cat > Fortran_file_search.ctl << EOF
-$TIME_START
-$NOWCASTEND
-$TIME_END
-tmp.out
-$MET_FILE
-EOF
-
-    log_debug "  Control file:"
-    log_debug "    TIME_START: $TIME_START"
-    log_debug "    NOWCASTEND: $NOWCASTEND"
-    log_debug "    TIME_END: $TIME_END"
-
-    # Step 3: Run Fortran file search executable
-    if [ ! -x "$MET_FILE_SEARCH" ]; then
-        log_warn "Fortran executable not found: $MET_FILE_SEARCH"
-        log_warn "Falling back to bash file selection"
         cd - > /dev/null
         return 1
     fi
 
-    log_info "  Running nos_ofs_met_file_search..."
-    $MET_FILE_SEARCH < Fortran_file_search.ctl > Fortran_file_search.log 2>&1
-    local RC=$?
+    local NFILES=$(wc -l < tmp.out)
+    log_info "  Found $NFILES available HRRR files"
 
-    if grep -q "COMPLETED SUCCESSFULLY" Fortran_file_search.log; then
-        log_info "  File search COMPLETED SUCCESSFULLY"
-    else
-        log_warn "  File search may have issues - check Fortran_file_search.log"
+    # Check Fortran executable
+    if [ ! -x "$MET_FILE_SEARCH" ]; then
+        log_warn "Fortran executable not found: $MET_FILE_SEARCH"
+        cd - > /dev/null
+        return 1
     fi
 
-    # Step 4: Read selected files
+    # ==========================================================================
+    # Step 2: Run Fortran for NOWCAST period (TIME_START to NOWCASTEND)
+    # ==========================================================================
+    log_info "  [1/2] Selecting NOWCAST files ($TIME_START to $NOWCASTEND)..."
+
+    cat > Fortran_nowcast.ctl << EOF
+$TIME_START
+$NOWCASTEND
+$NOWCASTEND
+tmp.out
+HRRR_FILE_nowcast.dat
+EOF
+
+    $MET_FILE_SEARCH < Fortran_nowcast.ctl > Fortran_nowcast.log 2>&1
+
+    if grep -q "COMPLETED SUCCESSFULLY" Fortran_nowcast.log; then
+        local NOWCAST_FILES=$(grep -c "^/" HRRR_FILE_nowcast.dat 2>/dev/null || echo "0")
+        log_info "    Nowcast: Selected $NOWCAST_FILES files"
+    else
+        log_warn "    Nowcast file search failed - check Fortran_nowcast.log"
+    fi
+
+    # ==========================================================================
+    # Step 3: Run Fortran for FORECAST period (NOWCASTEND to TIME_END)
+    # ==========================================================================
+    log_info "  [2/2] Selecting FORECAST files ($NOWCASTEND to $TIME_END)..."
+
+    cat > Fortran_forecast.ctl << EOF
+$NOWCASTEND
+$TIME_END
+$TIME_END
+tmp.out
+HRRR_FILE_forecast.dat
+EOF
+
+    $MET_FILE_SEARCH < Fortran_forecast.ctl > Fortran_forecast.log 2>&1
+
+    if grep -q "COMPLETED SUCCESSFULLY" Fortran_forecast.log; then
+        local FORECAST_FILES=$(grep -c "^/" HRRR_FILE_forecast.dat 2>/dev/null || echo "0")
+        log_info "    Forecast: Selected $FORECAST_FILES files"
+    else
+        log_warn "    Forecast file search failed - check Fortran_forecast.log"
+    fi
+
+    # ==========================================================================
+    # Step 4: Combine nowcast and forecast files (skip first forecast entry
+    # since NOWCASTEND is included in both)
+    # ==========================================================================
+    log_info "  Combining nowcast + forecast files..."
+
+    local MET_FILE="HRRR_FILE_DATM.dat"
+    rm -f $MET_FILE
+
+    # Add all nowcast files
+    if [ -s HRRR_FILE_nowcast.dat ]; then
+        cat HRRR_FILE_nowcast.dat >> $MET_FILE
+    fi
+
+    # Add forecast files (skip first 2 lines which duplicate NOWCASTEND hour)
+    if [ -s HRRR_FILE_forecast.dat ]; then
+        tail -n +3 HRRR_FILE_forecast.dat >> $MET_FILE
+    fi
+
+    # Step 5: Verify and set output
     if [ -s "$MET_FILE" ]; then
         HRRR_FILE_LIST="$SEARCH_DIR/$MET_FILE"
         local NSELECTED=$(grep -c "^/" "$MET_FILE" 2>/dev/null || echo "0")
-        log_info "  Selected $NSELECTED files for processing"
+        log_info "  Total: Selected $NSELECTED files for DATM"
 
-        # Log the selected files
+        # Log the selected files in verbose mode
         if [ "$VERBOSE" -ge 2 ]; then
             log_debug "  Selected files:"
             while IFS= read -r line; do
