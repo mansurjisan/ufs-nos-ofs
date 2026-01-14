@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 # #########################################################################
 #  Script Name: exnos_ofs_prep.sh
 #  Purpose:                                                                #
@@ -20,94 +20,20 @@
 set -x
 #PS4=" \${SECONDS} \${0##*/} L\${LINENO} + "
 
-# ============================================================================
-# Define helper functions if not already available (for standalone/dev runs)
-# ============================================================================
-if ! type err_chk >/dev/null 2>&1; then
-  err_chk() {
-    if [ ${err:-0} -ne 0 ]; then
-      echo "ERROR: Previous command failed with exit code $err"
-      return $err
-    fi
-  }
-fi
-
-if ! type prep_step >/dev/null 2>&1; then
-  prep_step() {
-    echo "[prep_step] Preparing next step..."
-  }
-fi
-
-if ! type postmsg >/dev/null 2>&1; then
-  postmsg() {
-    echo "[postmsg] $@"
-  }
-fi
-
-# NDATE utility for date calculations
-if ! type ndate >/dev/null 2>&1; then
-  ndate() {
-    hours=$1
-    base=$2
-    date -d "${base:0:8} ${base:8:2}:00 ${hours} hours" +%Y%m%d%H
-  }
-fi
-NDATE=${NDATE:-ndate}
-
 echo "Start ${RUN} Preparation " > $cormslogfile
-
-# ============================================================================
-# YAML Configuration Loading (Phase 1 Integration)
-# ============================================================================
-# Try loading YAML config first, fall back to legacy .ctl file
-# Priority: OFS_CONFIG env var -> FIXofs YAML -> FIXofs .ctl
-
-CONFIG_SOURCE="none"
-
-# Option 1: Load from OFS_CONFIG environment variable (YAML)
-if [ -n "$OFS_CONFIG" ] && [ -f "$OFS_CONFIG" ]; then
-    echo "Loading configuration from YAML: $OFS_CONFIG"
-    if [ -f "${USHnos}/nos_ofs_config.sh" ]; then
-        . ${USHnos}/nos_ofs_config.sh
-        if [ "${NOSOFS_CONFIG_LOADED:-0}" -eq 1 ]; then
-            CONFIG_SOURCE="yaml"
-            echo "Successfully loaded YAML config from $OFS_CONFIG" >> $cormslogfile
-        fi
-    fi
+#  Control Files For Model Run
+if [ -s ${FIXofs}/${PREFIXNOS}.ctl ]
+then
+  . ${FIXofs}/${PREFIXNOS}.ctl
+else
+  echo "${RUN} control file is not found"
+  echo "please provide  ${RUN} control file of ${PREFIXNOS}.ctl in ${FIXofs}"
+  msg="${RUN} control file is not found"
+  postmsg "$jlogfile" "$msg"
+  postmsg "$nosjlogfile" "$msg"
+  echo "${RUN} control file is not found"  >> $cormslogfile
+  err_chk
 fi
-
-# Option 2: Check for YAML config in FIXofs
-if [ "$CONFIG_SOURCE" = "none" ] && [ -f "${FIXofs}/${PREFIXNOS}.yaml" ]; then
-    echo "Loading configuration from YAML: ${FIXofs}/${PREFIXNOS}.yaml"
-    export OFS_CONFIG="${FIXofs}/${PREFIXNOS}.yaml"
-    if [ -f "${USHnos}/nos_ofs_config.sh" ]; then
-        . ${USHnos}/nos_ofs_config.sh
-        if [ "${NOSOFS_CONFIG_LOADED:-0}" -eq 1 ]; then
-            CONFIG_SOURCE="yaml"
-            echo "Successfully loaded YAML config from ${FIXofs}/${PREFIXNOS}.yaml" >> $cormslogfile
-        fi
-    fi
-fi
-
-# Option 3: Fall back to legacy .ctl file
-if [ "$CONFIG_SOURCE" = "none" ]; then
-    if [ -s ${FIXofs}/${PREFIXNOS}.ctl ]; then
-        . ${FIXofs}/${PREFIXNOS}.ctl
-        CONFIG_SOURCE="ctl"
-        echo "Loaded legacy .ctl config from ${FIXofs}/${PREFIXNOS}.ctl" >> $cormslogfile
-    else
-        echo "${RUN} control file is not found"
-        echo "please provide ${RUN} control file: ${PREFIXNOS}.yaml or ${PREFIXNOS}.ctl in ${FIXofs}"
-        msg="${RUN} control file is not found"
-        postmsg "$jlogfile" "$msg"
-        postmsg "$nosjlogfile" "$msg"
-        echo "${RUN} control file is not found" >> $cormslogfile
-        err_chk
-    fi
-fi
-
-echo "Configuration loaded from: $CONFIG_SOURCE"
-# ============================================================================
 
 export pgm="$USHnos/nos_ofs_launch.sh $OFS prep"
 echo "run the launch script to set the NOS configuration"
