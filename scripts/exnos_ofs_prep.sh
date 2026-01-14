@@ -438,6 +438,40 @@ fi
  echo "The script nos_ofs_create_forcing_met.sh forecast ended at time: " `date `
 fi
 
+# =============================================================================
+# DATM Blended Forcing Generation (for UFS-Coastal)
+# =============================================================================
+# USE_DATM=1 and DATM_BLEND_HRRR_GFS=1 enables HRRR+GFS blending for CDEPS/DATM
+# This must run AFTER forecast met forcing to ensure all HRRR/GFS data is available
+# =============================================================================
+if [ "${USE_DATM:-0}" == "1" ] && [ "${DATM_BLEND_HRRR_GFS:-0}" == "1" ]; then
+  echo "============================================"
+  echo "Generating DATM Blended HRRR+GFS Forcing"
+  echo "The script nos_ofs_create_datm_forcing_blended.sh starts at time: " `date`
+  echo "============================================"
+
+  export pgm=nos_ofs_create_datm_forcing_blended.sh
+  $USHnos/nos_ofs_create_datm_forcing_blended.sh ${DATM_DOMAIN:-SECOFS}
+  export err=$?
+
+  if [ $err -ne 0 ]; then
+    echo "Execution of $pgm did not complete normally, FATAL ERROR!"
+    echo "Execution of $pgm did not complete normally, FATAL ERROR!" >> $cormslogfile
+    msg=" Execution of $pgm did not complete normally, FATAL ERROR!"
+    postmsg "$jlogfile" "$msg"
+    postmsg "$nosjlogfile" "$msg"
+    err_chk
+  else
+    echo "Execution of $pgm completed normally"
+    echo "Execution of $pgm completed normally" >> $cormslogfile
+    msg=" Execution of $pgm completed normally"
+    postmsg "$jlogfile" "$msg"
+    postmsg "$nosjlogfile" "$msg"
+  fi
+
+  echo "The script nos_ofs_create_datm_forcing_blended.sh ended at time: " `date`
+fi
+
 if [ ${OCEAN_MODEL} == "FVCOM" -o ${OCEAN_MODEL} == "fvcom" ]
 then
 
