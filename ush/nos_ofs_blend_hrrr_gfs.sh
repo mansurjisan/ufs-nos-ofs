@@ -74,7 +74,7 @@ mkdir -p $OUTPUT_DIR
 
 # Find the Python blending script
 USHnos=${USHnos:-$(dirname $0)}
-BLEND_PY="${USHnos}/blend_hrrr_gfs.py"
+BLEND_PY="${USHnos}/pysh/blend_hrrr_gfs.py"
 
 if [ ! -s "$BLEND_PY" ]; then
     echo "ERROR: Python blending script not found: $BLEND_PY"
