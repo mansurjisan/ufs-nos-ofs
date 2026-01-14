@@ -7,12 +7,8 @@
 #   variables from GFS/HRRR GRIB2 files for all forecast hours.
 #   This creates time-series NetCDF files for use with UFS-Coastal CDEPS DATM.
 #
-#   The script follows the same file selection logic as the nosofs sflux
-#   generation to ensure data availability in operational environments:
-#   - GFS: Uses a base cycle (typically 6h before run cycle) with extended
-#          forecast hours (f003-f054)
-#   - HRRR: Uses hourly cycles for nowcast, then extended forecasts from
-#           the run cycle (00Z/06Z/12Z/18Z) for forecast period
+#   The script uses the same Fortran file selection (nos_ofs_met_file_search)
+#   as operational SFLUX generation to ensure consistency.
 #
 # Usage:
 #   ./nos_ofs_create_datm_forcing.sh DBASE OUTPUT_DIR [TIME_START] [TIME_END]
@@ -32,9 +28,16 @@
 #   NDATE      - Path to ndate utility
 #   NHOUR      - Path to nhour utility
 #
+# Logging Options (environment variables):
+#   VERBOSE=0  - Quiet mode (minimal output)
+#   VERBOSE=1  - Normal mode (default, shows progress)
+#   VERBOSE=2  - Debug mode (shows all file selections)
+#   LOG_FILE   - Path to save detailed log (optional)
+#
 # Output Files:
 #   gfs_forcing.nc  - GFS forcing file (if DBASE=GFS25)
 #   hrrr_forcing.nc - HRRR forcing file (if DBASE=HRRR)
+#   datm_work_*     - Work directory with debug artifacts
 #
 # Author: SECOFS UFS-Coastal Transition
 # Date: January 2026
@@ -167,8 +170,6 @@ fi
 # =============================================================================
 # Function: Find GFS file for a valid time
 # Strategy: Use base cycle with extended forecasts (up to f120 = 5 days)
-# For operational runs, cycles from future dates won't exist, so we must
-# go back far enough to find an available cycle
 # =============================================================================
 find_gfs_file() {
     local VALID_TIME=$1
@@ -186,13 +187,9 @@ find_gfs_file() {
     local CYCLE_DATE=$INIT_DATE
     local CYCLE_TIME="${CYCLE_DATE}${CYCLE_HH}"
 
-    # Try up to 12 cycles (going back 72 hours) to handle operational scenarios
-    # where future cycles don't exist yet. GFS f120 covers 5 days ahead.
+    # Try up to 12 cycles (going back 72 hours)
     for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
         local FHR=$($NHOUR $VALID_TIME $CYCLE_TIME 2>/dev/null || echo "-1")
-
-        # Skip if FHR is negative or too large
-        # Use 10# to force decimal interpretation (nhour can return "09" which is invalid octal)
         local FHR_DEC=$((10#$FHR))
         if [ "$FHR_DEC" -ge 0 ] && [ "$FHR_DEC" -le 120 ]; then
             local FHR_STR=$(printf "%03d" $FHR_DEC)
@@ -281,11 +278,11 @@ find_hrrr_files_fortran() {
     log_info "  Found $NFILES HRRR files"
 
     # Step 2: Create control file for Fortran executable
-    # Format: TIME_START, nowcastend, TIME_END, input_file, output_file
     local NOWCASTEND=${time_nowcastend:-$TIME_START}
     local MET_FILE="HRRR_FILE_DATM.dat"
 
     cat > Fortran_file_search.ctl << EOF
+HRRR
 $TIME_START
 $NOWCASTEND
 $TIME_END
@@ -322,13 +319,6 @@ EOF
         local NSELECTED=$(grep -c "^/" "$MET_FILE" 2>/dev/null || echo "0")
         log_info "  Selected $NSELECTED files for processing"
 
-        # Copy file search artifacts to output directory for debugging
-        cp -p tmp.out ${OUTPUT_DIR}/hrrr_files_available.txt 2>/dev/null
-        cp -p Fortran_file_search.ctl ${OUTPUT_DIR}/hrrr_file_search.ctl 2>/dev/null
-        cp -p Fortran_file_search.log ${OUTPUT_DIR}/hrrr_file_search.log 2>/dev/null
-        cp -p $MET_FILE ${OUTPUT_DIR}/hrrr_files_selected.dat 2>/dev/null
-        log_info "  File search logs copied to ${OUTPUT_DIR}/"
-
         # Log the selected files
         if [ "$VERBOSE" -ge 2 ]; then
             log_debug "  Selected files:"
@@ -360,7 +350,6 @@ get_hrrr_file_from_list() {
     fi
 
     # Parse the Fortran output file
-    # Format: filepath followed by date line (YYYY MM DD CYC FHR)
     local VALID_DATE=$(echo $VALID_TIME | cut -c1-8)
     local VALID_HH=$(echo $VALID_TIME | cut -c9-10)
 
@@ -402,7 +391,7 @@ get_hrrr_file_from_list() {
 }
 
 # =============================================================================
-# Function: Find HRRR file (wrapper - tries Fortran first, then bash fallback)
+# Function: Find HRRR file (wrapper - tries Fortran first)
 # =============================================================================
 HRRR_FORTRAN_INITIALIZED=0
 
@@ -588,8 +577,7 @@ if command -v ncatted &> /dev/null; then
     # Add calendar attribute (required by CDEPS/ESMF time manager)
     ncatted -O -a calendar,time,o,c,"standard" $OUTPUT_FILE
 
-    # Remove potentially conflicting reference time attributes that confuse CDEPS
-    # These are sometimes added by wgrib2 and can cause date misinterpretation
+    # Remove potentially conflicting reference time attributes
     ncatted -O -a reference_time,time,d,, $OUTPUT_FILE 2>/dev/null || true
     ncatted -O -a reference_date,time,d,, $OUTPUT_FILE 2>/dev/null || true
     ncatted -O -a reference_time_type,time,d,, $OUTPUT_FILE 2>/dev/null || true
@@ -623,12 +611,29 @@ if command -v ncdump &> /dev/null; then
 fi
 
 # =============================================================================
-# Cleanup
+# Cleanup - Preserve temp directory for debugging
 # =============================================================================
 echo ""
-echo "Cleaning up temporary files..."
-rm -rf $TEMP_DIR
+echo "Preserving work directory for debugging..."
+
+# Remove intermediate raw file
 rm -f ${OUTPUT_DIR}/${DBASE_LOWER}_forcing_raw.nc
+
+# Move temp directory to output directory (renamed for clarity)
+WORK_DIR_DEST="${OUTPUT_DIR}/datm_work_${PDY}${cyc}"
+if [ -d "$WORK_DIR_DEST" ]; then
+    rm -rf "$WORK_DIR_DEST"
+fi
+mv $TEMP_DIR $WORK_DIR_DEST
+echo "Work directory saved to: $WORK_DIR_DEST"
+echo ""
+echo "Contents of work directory:"
+ls -la $WORK_DIR_DEST/ 2>/dev/null | head -20
+if [ -d "$WORK_DIR_DEST/file_search" ]; then
+    echo ""
+    echo "File search artifacts:"
+    ls -la $WORK_DIR_DEST/file_search/ 2>/dev/null
+fi
 
 # Print summary of files used (if HRRR and verbose mode)
 if [ "$DBASE_UPPER" == "HRRR" ] && [ "$VERBOSE" -ge 1 ]; then
@@ -644,6 +649,7 @@ echo "Time range: $TIME_START to $TIME_END"
 echo "Time steps: $TIME_STEPS"
 if [ "$DBASE_UPPER" == "HRRR" ]; then
     echo "File selection: nos_ofs_met_file_search (Fortran)"
+    echo "Work directory: $WORK_DIR_DEST"
 fi
 echo "============================================"
 
