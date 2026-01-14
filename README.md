@@ -18,7 +18,7 @@ This repository contains scripts and configurations for transitioning NOS-OFS mo
 | `scripts/` | Ex-scripts for prep, nowcast, forecast |
 | `ecf/` | ECF job card templates |
 
-## UFS-Coastal DATM Workflow
+## UFS-Coastal CDEPS DATA-ATM Workflow
 
 ```
 HRRR (3km) ─┐
