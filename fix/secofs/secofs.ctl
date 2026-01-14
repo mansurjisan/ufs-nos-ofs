@@ -1,7 +1,7 @@
-# control files for creofs, which is read in by shell script 
+# control files for creofs, which is read in by shell script
 
 export MET_NUM=2
-export DBASE_MET_NOW=GFS	
+export DBASE_MET_NOW=GFS
 export DBASE_MET_FOR=GFS
 
 export DBASE_MET_NOW2=HRRR
@@ -15,10 +15,24 @@ export DBASE_MET_FOR2=HRRR
 # GENERATE_UFS_CONFIG   : Generate UFS config files (true/false)
 # USE_HRRR              : Include HRRR forcing (true/false, auto-detected)
 # =============================================================================
-export GENERATE_ESMF_MESH=false
+export GENERATE_ESMF_MESH=true
 export GENERATE_DATM_FORCING=true
 export GENERATE_UFS_CONFIG=true
 export USE_HRRR=true
+
+# =============================================================================
+# DATM Blended HRRR+GFS Forcing (for UFS-Coastal)
+# =============================================================================
+# USE_DATM            : Enable DATM forcing generation (0=off, 1=on)
+# DATM_BLEND_HRRR_GFS : Enable HRRR+GFS blending (0=off, 1=on)
+# DATM_DOMAIN         : Domain preset (SECOFS, ATLANTIC, STOFS3D_ATL)
+#                       SECOFS: 23°N-37°N, 82°W-73°W
+#                       ATLANTIC: 10°N-53°N, 98°W-55°W
+#                       STOFS3D_ATL: 7°N-53°N, 99°W-52°W
+# =============================================================================
+export USE_DATM=1
+export DATM_BLEND_HRRR_GFS=1
+export DATM_DOMAIN=SECOFS
 
 export DBASE_WL_NOW=RTOFS
 export DBASE_WL_FOR=RTOFS
@@ -33,17 +47,17 @@ export BASE_DATE=2011010100
 export TIME_START=2011090100
 export MINLON=-88.0
 export MINLAT=17.0
-export MAXLON=-63.0 
+export MAXLON=-63.0
 export MAXLAT=40.0
-export SCALE_HFLUX=1.0 
+export SCALE_HFLUX=1.0
 export CREATE_TIDEFORCING=1
 ########################################################
 ##  static input file name, do not include path name
 ########################################################
 export GRIDFILE=${PREFIXNOS}.hgrid.gr3
 export GRIDFILE_LL=${PREFIXNOS}.hgrid.ll
-#export HC_FILE_OBC=${PREFIXNOS}.HC.nc 
-#export HC_FILE_OFS=${PREFIXNOS}.HC.nc 
+#export HC_FILE_OBC=${PREFIXNOS}.HC.nc
+#export HC_FILE_OFS=${PREFIXNOS}.HC.nc
 
 export HC_FILE_OBC=${PREFIXNOS}.bctides.in
 export HC_FILE_OFS=${PREFIXNOS}.bctides.in_template
@@ -92,7 +106,7 @@ export KBm=63
 # 2. 3600/DELT_MODEL has to be an integer (for station and field output time intervals)
 # 3. Change DELT=DELT_MODEL/3600 in river control file
 # 4. Change DELT=DELT_MODEL in OBC control file (in seconds)
-export DELT_MODEL=120      
+export DELT_MODEL=120
 export EXTSTEP_SECONDS=120.0
 export NDTFAST=20
 export NRST=21600
@@ -107,10 +121,10 @@ export IHORCON_VALUE=0
 export IHDIF_VALUE=0
 export IDRAG_VALUE=2
 export BFRIC_VALUE=0
-export IHHAT_VALUE=1 
+export IHHAT_VALUE=1
 export INUNFL_VALUE=0
-# STEP_NU_VALUE is time interval (in seconds) of T & S nudging 
-export STEP_NU_VALUE=10800.0   
+# STEP_NU_VALUE is time interval (in seconds) of T & S nudging
+export STEP_NU_VALUE=10800.0
 export MIN_DEPTH=0.01
 export NWS_VALUE=2
 export NRAMPWIND_VALUE=1
@@ -121,11 +135,11 @@ export RDRG2=0.005d0
 export Zob=0.0005d0
 export VISC2=0.0d0
 export VISC4=0.0d0
-export AKT_BAK="5.0d-6 5.0d-6 !m2/s"                   
-export AKV_BAK="5.0d-5   !m2/s"                         
-export AKK_BAK="5.0d-6   !m2/s"                        
-export AKP_BAK="5.0d-6   !m2/s "                       
-export DCRIT="0.10d0     !m"                 
+export AKT_BAK="5.0d-6 5.0d-6 !m2/s"
+export AKV_BAK="5.0d-5   !m2/s"
+export AKK_BAK="5.0d-6   !m2/s"
+export AKP_BAK="5.0d-6   !m2/s "
+export DCRIT="0.10d0     !m"
 export DSTART=151.0d0
 export TIDE_START=0.0d0
 
@@ -155,9 +169,9 @@ export NVAR=9
 # LEN_FORECAST:Forecast length of OFS forecast cycle.
 # IGRD_MET    :spatial interpolation method for atmospheric forcing fields
 #           =0:on native grid of NCEP products with wind rotated to earth coordinates
-#	    =1:on ocean model grid (rotated to local coordinates) interpolated using remesh routine.
-#	    =2:on ocean model grid (rotated to local coordinates) interpolated using bicubic routine.
-#	    =3:on ocean model grid (rotated to local coordinates) interpolated using bilinear routine.
+#           =1:on ocean model grid (rotated to local coordinates) interpolated using remesh routine.
+#           =2:on ocean model grid (rotated to local coordinates) interpolated using bicubic routine.
+#           =3:on ocean model grid (rotated to local coordinates) interpolated using bilinear routine.
 #           =4:on ocean model grid (rotated to local coordinates) interpolated using nature neighbors routine.
 # IGRD_OBC    :spatial interpolation method for ocean open boundary forcing fields
 # BASE_DATE   :base date for the OFS time system, e.g. YYYYMMDDHH (2008010100)
@@ -171,12 +185,12 @@ export NVAR=9
 # TCLINE      :Width (m) of surface or bottom boundary layer in which
 #             :higher vertical resolution is required during stretching.
 # SCALE_HFLUX :scaling factor (fraction) of surface heat flux (net short-wave and downward
-#              long-wave radiation). if =1.0, no adjustment to atmospheric products.  
+#              long-wave radiation). if =1.0, no adjustment to atmospheric products.
 # CREATE_TIDEFORCING : > 0, generate tidal forcing file
-# HC_FILE_ADCIRC     : ADCIRC EC2001 harmonic constant file 
-# HC_FILE_ROMS     : Tidal forcing file of ROMS (contains tide constituents of WL, ubar, and vbar) 
+# HC_FILE_ADCIRC     : ADCIRC EC2001 harmonic constant file
+# HC_FILE_ROMS     : Tidal forcing file of ROMS (contains tide constituents of WL, ubar, and vbar)
 # EL_HC_CORRECTION   : > 0, correction elevation harmonics with user provided data
-# FILE_EL_HC_CORRECTION : file name contains elevation harmonics for correction                
+# FILE_EL_HC_CORRECTION : file name contains elevation harmonics for correction
 # RIVER_CTL_FILE  : File name contains river attributes (Xpos, Epos, Flag, River name,etc.)
 # OBC_CTL_FILE  : Control file name for generating open boundary conditions (WL, T and S).
 # IM          :GRID Number of I-direction RHO-points, it is xi_rho for ROMS
@@ -227,3 +241,6 @@ export NVAR=9
 #                      When true, creates gfs_esmf_mesh.nc and hrrr_esmf_mesh.nc
 #                      after sflux files are generated. Requires: wgrib2, ESMF_Scrip2Unstruct,
 #                      Python 3 with netCDF4, numpy, xarray
+# USE_DATM           : Enable DATM blended forcing generation (0=off, 1=on)
+# DATM_BLEND_HRRR_GFS: Enable HRRR+GFS blending for DATM (0=off, 1=on)
+# DATM_DOMAIN        : Domain preset for blending (SECOFS, ATLANTIC, STOFS3D_ATL)

@@ -26,10 +26,10 @@ sorc/
 # Exclude all fix files by default
 fix/
 
-# BUT include UFS templates and control files (use git add -f)
-# !fix/secofs/secofs.ctl
-# !fix/secofs/ufs.configure
-# !fix/secofs/*.template
+# BUT include UFS templates and control files
+!fix/secofs/secofs.ctl
+!fix/secofs/ufs.configure
+!fix/secofs/*.template
 
 # -----------------------------------------------------------------------------
 # Log Files and Output
