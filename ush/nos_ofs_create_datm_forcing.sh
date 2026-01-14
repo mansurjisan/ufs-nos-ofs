@@ -99,7 +99,7 @@ log_msg() {
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
 
     if [ "$level" -le "$VERBOSE" ]; then
-        echo "[$timestamp] $msg"
+        echo "[$timestamp] $msg" >&2
         if [ -n "$LOG_FILE" ]; then
             echo "[$timestamp] $msg" >> "$LOG_FILE"
         fi
