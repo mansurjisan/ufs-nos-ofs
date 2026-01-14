@@ -8,8 +8,6 @@ This repository contains scripts and configurations for transitioning NOS-OFS mo
 
 **Current Focus:** SECOFS (Southeast Coastal Ocean Forecast System)
 
-**Future Extensions:** CBOFS, DBOFS, TBOFS, GOMOFS, and other NOS-OFS systems
-
 ## Key Components
 
 | Directory | Contents |
