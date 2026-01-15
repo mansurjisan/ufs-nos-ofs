@@ -34,8 +34,9 @@ set -eu
 # =============================================================================
 # Load Python Module (WCOSS2)
 # =============================================================================
-# Save current LD_LIBRARY_PATH (Intel modules can conflict with scipy)
+# Save current environment (Intel modules can conflict with scipy)
 ORIG_LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
+ORIG_LD_PRELOAD="${LD_PRELOAD:-}"
 
 # Temporarily clear Intel library paths that cause scipy segfaults
 unset LD_PRELOAD 2>/dev/null || true
@@ -213,3 +214,7 @@ echo "For DATM configuration, update datm_in with:"
 echo "  nx_global = $(ncdump -h $OUTPUT_FILE 2>/dev/null | grep "x = " | sed 's/.*x = \([0-9]*\).*/\1/' || echo "CHECK")"
 echo "  ny_global = $(ncdump -h $OUTPUT_FILE 2>/dev/null | grep "y = " | sed 's/.*y = \([0-9]*\).*/\1/' || echo "CHECK")"
 echo "============================================"
+
+# Restore original environment
+export LD_LIBRARY_PATH="${ORIG_LD_LIBRARY_PATH}"
+[ -n "${ORIG_LD_PRELOAD}" ] && export LD_PRELOAD="${ORIG_LD_PRELOAD}"
