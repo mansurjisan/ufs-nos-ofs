@@ -38,6 +38,14 @@ if command -v module &> /dev/null; then
     module load python/3.12.0 2>/dev/null || true
 fi
 
+# Use full path to Python 3.12 on WCOSS2
+if [ -x "/apps/spack/python/3.12.0/intel/19.1.3.304/r7ia355o3tnbbmfexnp3bcsyl2r4ai47/bin/python" ]; then
+    PYTHON_EXE="/apps/spack/python/3.12.0/intel/19.1.3.304/r7ia355o3tnbbmfexnp3bcsyl2r4ai47/bin/python"
+else
+    PYTHON_EXE="python"
+fi
+echo "Using Python: $PYTHON_EXE"
+
 # =============================================================================
 # Parse Arguments
 # =============================================================================
@@ -81,8 +89,8 @@ if [ ! -s "$BLEND_PY" ]; then
     exit 1
 fi
 
-echo "Running: python $BLEND_PY $HRRR_FILE $GFS_FILE $OUTPUT_FILE $DOMAIN $RESOLUTION"
-python $BLEND_PY $HRRR_FILE $GFS_FILE $OUTPUT_FILE $DOMAIN $RESOLUTION
+echo "Running: $PYTHON_EXE $BLEND_PY $HRRR_FILE $GFS_FILE $OUTPUT_FILE $DOMAIN $RESOLUTION"
+$PYTHON_EXE $BLEND_PY $HRRR_FILE $GFS_FILE $OUTPUT_FILE $DOMAIN $RESOLUTION
 BLEND_STATUS=$?
 
 if [ $BLEND_STATUS -ne 0 ]; then
@@ -124,7 +132,7 @@ if [ ! -s "$SCRIP_SCRIPT" ]; then
 fi
 
 if [ -s "$SCRIP_SCRIPT" ]; then
-    python $SCRIP_SCRIPT --ifile $OUTPUT_FILE --ofile $(basename $SCRIP_FILE) --odir $OUTPUT_DIR
+    $PYTHON_EXE $SCRIP_SCRIPT --ifile $OUTPUT_FILE --ofile $(basename $SCRIP_FILE) --odir $OUTPUT_DIR
     SCRIP_STATUS=$?
 else
     echo "WARNING: proc_scrip.py not found at $SCRIP_SCRIPT"
