@@ -34,9 +34,19 @@ set -eu
 # =============================================================================
 # Load Python Module (WCOSS2)
 # =============================================================================
+# Save current LD_LIBRARY_PATH (Intel modules can conflict with scipy)
+ORIG_LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
+
+# Temporarily clear Intel library paths that cause scipy segfaults
+unset LD_PRELOAD 2>/dev/null || true
+export LD_LIBRARY_PATH="/apps/spack/python/3.12.0/intel/19.1.3.304/r7ia355o3tnbbmfexnp3bcsyl2r4ai47/lib:${LD_LIBRARY_PATH:-}"
+
 if command -v module &> /dev/null; then
     module load python/3.12.0 2>/dev/null || true
 fi
+
+# Set stack size to unlimited (prevents segfaults in scipy)
+ulimit -s unlimited 2>/dev/null || true
 
 # Use full path to Python 3.12 on WCOSS2
 if [ -x "/apps/spack/python/3.12.0/intel/19.1.3.304/r7ia355o3tnbbmfexnp3bcsyl2r4ai47/bin/python" ]; then
@@ -45,6 +55,7 @@ else
     PYTHON_EXE="python"
 fi
 echo "Using Python: $PYTHON_EXE"
+echo "Stack limit: $(ulimit -s)"
 
 # =============================================================================
 # Parse Arguments
